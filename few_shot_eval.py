@@ -3,13 +3,8 @@ import numpy as np
 from args import *
 from utils import *
 from classification_heads import MetaOptNetHead_SVM_CS as svm
-
 n_runs = args.n_runs
-<<<<<<< HEAD
-batch_few_shot_runs = 200
-=======
 batch_few_shot_runs = args.batch_fs
->>>>>>> 85937e0d2d67a801dba7a96974a79c2d6cad86b7
 assert(n_runs % batch_few_shot_runs == 0)
 
 def define_runs(n_ways, n_shots, n_queries, num_classes, elements_per_class):
