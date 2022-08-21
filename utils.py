@@ -104,15 +104,26 @@ class LabelSmoothingLoss(nn.Module):
         super(LabelSmoothingLoss, self).__init__()
         self.smoothing = smoothing
         self.cls = num_classes
+        self.ce = nn.CrossEntropyLoss()
 
     def forward(self, pred, target):
         assert 0 <= self.smoothing < 1
-        pred = pred.log_softmax(dim=-1)
+        ce = self.ce(pred, target)
+        reg = pred.log_softmax(dim=-1).mean()
+        return ce + self.smoothing*reg
 
-        with torch.no_grad():
-            true_dist = torch.zeros_like(pred)
-            true_dist.fill_(self.smoothing / (self.cls - 1))
-            true_dist.scatter_(1, target.data.unsqueeze(1), 1 - self.smoothing)
-        return torch.mean(torch.sum(-true_dist * pred, dim=-1))
+class SymmetricLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.ce = nn.CrossEntropyLoss(reduction='none')
+
+    def forward(self, pred, target):
+        return (-self.ce(pred, target)).exp().mean()
+
+import math
+def one_vs_all_logistic(input, target, m=0.0, t=1.0):
+    y = F.one_hot(target, num_classes=input.shape[1]).to(device=input.device, dtype=input.dtype) * 2 - 1
+    logistic = torch.log(m+torch.exp(-input*y/t))-math.log(m)
+    return 2*logistic.mean()
 
 print("utils, ", end='')

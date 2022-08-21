@@ -3,7 +3,7 @@ This repository is the official implementation of [EASY - Ensemble Augmented-Sho
 
 EASY proposes a simple methodology, that reaches or even beats state of the art performance on multiple standardized benchmarks of the field, while adding almost no hyperparameters or parameters to those used for training the initial deep learning models on the generic dataset.
 
-## Downloads 
+## Downloads F
 Please click the [Google Drive link](https://drive.google.com/drive/folders/1fMeapvuR6Rby0HDHd5L74BEXRyiOF942) for downloading the features, backbones and datasets.
 
 Each of the files (backbones and features) have the following prefixes depending on the backbone: 
@@ -40,7 +40,7 @@ Test features on miniimagenet using EY (3xResNet12)
     
 Test features on miniimagenet using EASY (3xResNet12)
 
-    $ python main.py --dataset-path "<dataset-path>" --dataset miniimagenet --model resnet12 --test-features "[<path>/minifeaturesAS1.pt11, <path>/minifeaturesAS2.pt11, <path>/minifeaturesAS3.pt11]" --preprocessing ME --n-shots 1
+    $ python main.py --dataset-path "<dataset-path>" --dataset miniimagenet --model resnet12 --test-features "[<path>/minifeaturesAS1.pt11, <path>/minifeaturesAS2.pt11, <path>/minifeaturesAS3.pt11]"  
 
 
 ### Transductive setup using Soft k-means

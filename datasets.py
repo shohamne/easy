@@ -1,3 +1,4 @@
+import pickle
 from torchvision import transforms, datasets
 from args import args
 import numpy as np
@@ -292,6 +293,9 @@ def cifarfs(use_hd=True, data_augmentation=True):
     if args.episodic:
         train_loader = episodic_iterator(datasets['train'][0], 64, transforms = train_transforms, forcecpu=True, use_hd=True)
     else:
+        for i in range(len(datasets['train'][1])):
+            if torch.rand(1) < args.label_noise:
+                datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))  
         train_loader = iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["val"][0], datasets["val"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -333,6 +337,9 @@ def miniImageNet(use_hd = True):
     if args.episodic:
         train_loader = episodic_iterator(datasets["train"][0], 64, transforms = train_transforms, forcecpu = True, use_hd = True)
     else:
+        for i in range(len(datasets['train'][1])):
+            if torch.rand(1) < args.label_noise:
+                datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))   
         train_loader = iterator(datasets["train"][0], datasets["train"][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["validation"][0], datasets["validation"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -395,8 +402,9 @@ def tieredImageNet(use_hd=True):
                         
         datasets[subset] = [data, torch.LongTensor(target)]
 
+
     datasets['train_base']=[data_train, torch.LongTensor(target_train)] # clean train without duplicates
-            
+    
     assert (len(datasets['train'][0])+len(datasets['val'][0])+len(datasets['test'][0])==total), 'Total number of sample per class is not 1300'
     print()
     norm = transforms.Normalize(np.array([x / 255.0 for x in [125.3, 123.0, 113.9]]), np.array([x / 255.0 for x in [63.0, 62.1, 66.7]]))
@@ -405,6 +413,9 @@ def tieredImageNet(use_hd=True):
     if args.episodic:
         train_loader = episodic_iterator(datasets["train_base"][0], 351, transforms = train_transforms, forcecpu = True, use_hd = True)
     else:
+        for i in range(len(datasets['train_base'][1])):
+            if torch.rand(1) < args.label_noise:
+                datasets['train_base'][1][i] = np.random.choice(list(set(range(20)) - set([datasets['train_base'][1][i]])))  
         train_loader = iterator(datasets["train_base"][0], datasets["train_base"][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["val"][0], datasets["val"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -459,6 +470,9 @@ def fc100(use_hd=True):
     if args.episodic:
         train_loader = episodic_iterator(datasets["train"][0], 60, transforms = train_transforms, forcecpu = True, use_hd = True)
     else:
+        for i in range(len(datasets['train'][1])):
+            if torch.rand(1) < args.label_noise:
+                datasets['train'][1][i] = np.random.choice(list(set(range(60)) - set([datasets['train'][1][i]])))  
         train_loader = iterator(datasets["train"][0], datasets["train"][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["val"][0], datasets["val"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -543,6 +557,9 @@ def CUBfs(use_hd=True):
     if args.episodic:
         train_loader = episodic_iterator(datasets['train_base'][0], 100, transforms = train_transforms, forcecpu = True, use_hd = use_hd)
     else:
+        for i in range(len(datasets['train'][1])):
+            if torch.rand(1) < args.label_noise:
+                datasets['train'][1][i] = np.random.choice(list(set(range(100)) - set([datasets['train'][1][i]])))      
         train_loader = iterator(datasets['train_base'][0], datasets['train_base'][1], transforms = train_transforms, forcecpu = True, use_hd=use_hd)
     train_clean = iterator(datasets['train'][0], datasets['train'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd=use_hd)
     val_loader = iterator(datasets['val'][0], datasets['val'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd=use_hd)
@@ -566,6 +583,7 @@ def omniglotfs():
     if args.episodic:
         train_loader = episodic_iterator(base_data, base.shape[0], transforms = train_transforms)
     else:
+        assert (args.label_noise == 0)
         train_loader = iterator(base_data, base_targets, transforms = train_transforms)
     train_clean = iterator(base_data, base_targets, transforms = all_transforms, shuffle = False)
     val_loader = iterator(val_data, val_targets, transforms = all_transforms, shuffle = False)
@@ -588,11 +606,41 @@ def miniImageNet84():
     if args.episodic:
         train_loader = episodic_iterator(train, 64, transforms = train_transforms, forcecpu = True)
     else:
+        for i in range(len(train_targets)):
+            if torch.rand(1) < args.label_noise:
+                train_targets[i] = np.random.choice(list(set(range(64)) - set([train_targets[i]])))     
         train_loader = iterator(train, train_targets, transforms = train_transforms, forcecpu = True)
     train_clean = iterator(train, train_targets, transforms = all_transforms, forcecpu = True, shuffle = False)
     val_loader = iterator(validation, validation_targets, transforms = all_transforms, forcecpu = True, shuffle = False)
     test_loader = iterator(test, test_targets, transforms = all_transforms, forcecpu = True, shuffle = False)
     return (train_loader, train_clean, val_loader, test_loader), [3, 84, 84], (64, 16, 20, 600), True, False
+
+
+def miniImageNet8484():
+    with open(args.dataset_path + "miniimagenet/train.pkl", 'rb') as f:
+        train_file = pickle.load(f)
+    train, train_targets = [transforms.ToTensor()(x) for x in train_file["data"]], train_file["labels"]
+    with open(args.dataset_path + "miniimagenet/test.pkl", 'rb') as f:
+        test_file = pickle.load(f)
+    test, test_targets = [transforms.ToTensor()(x) for x in test_file["data"]], test_file["labels"]
+    with open(args.dataset_path + "miniimagenet/validation.pkl", 'rb') as f:
+        validation_file = pickle.load(f)
+    validation, validation_targets = [transforms.ToTensor()(x) for x in validation_file["data"]], validation_file["labels"]
+    norm = transforms.Normalize(np.array([x / 255.0 for x in [125.3, 123.0, 113.9]]), np.array([x / 255.0 for x in [63.0, 62.1, 66.7]]))
+    train_transforms = torch.nn.Sequential(transforms.RandomResizedCrop(84), transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4), transforms.RandomHorizontalFlip(), norm)
+    all_transforms = torch.nn.Sequential(transforms.Resize(92), transforms.CenterCrop(84), norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(84), norm)
+    if args.episodic:
+        train_loader = episodic_iterator(train, 64, transforms = train_transforms, forcecpu = True)
+    else:
+        for i in range(len(datasets['train'][1])):
+            if torch.rand(1) < args.label_noise:
+                datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))     
+        train_loader = iterator(train, train_targets, transforms = train_transforms, forcecpu = True)
+    train_clean = iterator(train, train_targets, transforms = all_transforms, forcecpu = True, shuffle = False)
+    val_loader = iterator(validation, validation_targets, transforms = all_transforms, forcecpu = True, shuffle = False)
+    test_loader = iterator(test, test_targets, transforms = all_transforms, forcecpu = True, shuffle = False)
+    return (train_loader, train_clean, val_loader, test_loader), [3, 84, 84], (64, 16, 20, 600), True, False
+
 
 def get_dataset(dataset_name):
     if dataset_name.lower() == "cifar10":

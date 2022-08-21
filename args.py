@@ -2,6 +2,17 @@ import argparse
 import os
 import random
 import numpy as np
+import torch
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 parser = argparse.ArgumentParser(description="""Optimized code for training usual datasets/model
 
@@ -27,8 +38,7 @@ python main.py --dataset cifarfs --mixup --rotations --skip-epochs 300 --preproc
 To train CIFARFS (few-shot) with 86.83% accuracy (70.27% in 1-shot) (3h):
 python main.py --dataset cifarfs --mixup --model wideresnet --feature-maps 16 --skip-epochs 300 --rotations --preprocessing "PEME"
 To train MiniImageNet (few-shot) with 80.43% accuracy (64.11% in 1-shot) (2h):
-python main.py --dataset miniimagenet --model resnet12 --gamma 0.2 --milestones 30 --epochs 120 --batch-size 128 --preprocessing 'EME'
-To train MiniImageNet (few-shot) with rotations and 81.63% accuracy (65.64% in 1-shot) (2h):
+1To train MiniImageNet (few-shot) with rotations and 81.63% accuracy (65.64% in 1-shot) (2h):
 python main.py --dataset miniimagenet --model resnet12 --milestones 60 --epochs 240 --cosine --gamma 1 --rotations --skip-epochs 200
 To train MiniImageNet (few-shot) with 83.18% accuracy (66.78% in 1-shot) (40h):
 python main.py --device cuda:012 --dataset miniimagenet --model S2M2R --lr -0.001 --milestones 0 --epochs 600 --feature-maps 16 --rotations --manifold-mixup 400 --skip-epochs 600 --preprocessing "PEME"
@@ -46,14 +56,24 @@ parser.add_argument("--mixup", action="store_true", help="use of mixup since beg
 parser.add_argument("--mm", action="store_true", help="to be used in combination with mixup only: use manifold_mixup instead of classical mixup")
 parser.add_argument("--label-smoothing", type=float, default=0, help="use label smoothing with this value")
 parser.add_argument("--dropout", type=float, default=0, help="use dropout")
-parser.add_argument("--rotations", action="store_true", help="use of rotations self-supervision during training")
+parser.add_argument("--rotations", type=float, default=0.5, help="weight of rotations self-supervision during training")
+parser.add_argument("--symmetric-loss", type=float, default=0.0, help="weight of symmetric loss")
 parser.add_argument("--model", type=str, default="ResNet18", help="model to train")
 parser.add_argument("--preprocessing", type=str, default="", help="preprocessing sequence for few shot, can contain R:relu P:sqrt E:sphering and M:centering")
 parser.add_argument("--postprocessing", type=str, default="", help="postprocessing sequence for few shot, can contain R:relu P:sqrt E:sphering and M:centering")
-
 parser.add_argument("--manifold-mixup", type=int, default="0", help="deploy manifold mixup as fine-tuning as in S2M2R for the given number of epochs")
 parser.add_argument("--temperature", type=float, default=1., help="multiplication factor before softmax when using episodic")
 parser.add_argument("--ema", type=float, default=0, help="use exponential moving average with specified decay (default, 0 which means do not use)")
+parser.add_argument("--one-vs-all-logistic", action="store_true", help="use one vs all logistic loss")
+parser.add_argument("--distance", action="store_true", help="use distance")
+parser.add_argument("--feature-dim", type=int, default=-1, help="feature dimenssion")
+parser.add_argument("--encoding", type=str, default="rff", help="feature dimenssion")
+parser.add_argument("--logdet-factor", type=float, default=None, help="factor for logdet regularization")
+parser.add_argument("--lam", type=float, default=1., help="factor for logdet regularization")
+parser.add_argument("--bias", type=str2bool, default=False, help="use bias in linear regression and svm")
+parser.add_argument("--average", type=str2bool, default=True, help="average samples")
+parser.add_argument("--exp-factor", type=float, default=0.1, help="exponential average factor")
+parser.add_argument("--svm-c", type=float, default=0.1, help="exponential average factor")
 
 ### pytorch options
 parser.add_argument("--device", type=str, default="cuda:0", help="device(s) to use, for multiple GPUs try cuda:ijk, will not work with 10+ GPUs")
@@ -79,11 +99,13 @@ parser.add_argument("--wandb", type=str, default='', help="Report to wandb, inpu
 parser.add_argument("--n-shots", type=str, default="[1,5]", help="how many shots per few-shot run, can be int or list of ints. In case of episodic training, use first item of list as number of shots.")
 parser.add_argument("--n-runs", type=int, default=10000, help="number of few-shot runs")
 parser.add_argument("--n-ways", type=int, default=5, help="number of few-shot ways")
+parser.add_argument("--n-unknown", type=int, default=5, help="number of unknown classes")
 parser.add_argument("--n-queries", type=int, default=15, help="number of few-shot queries")
 parser.add_argument("--sample-aug", type=int, default=1, help="number of versions of support/query samples (using random crop) 1 means no augmentation")
 parser.add_argument("--ncm-loss", action="store_true", help="use ncm output instead of linear")
 parser.add_argument("--episodic", action="store_true", help="use episodic training")
 parser.add_argument("--episodes-per-epoch", type=int, default=100, help="number of episodes per epoch")
+
 # only for transductive, used with "test-features"
 parser.add_argument("--transductive", action="store_true", help ="test features in transductive setting")
 parser.add_argument("--transductive-softkmeans", action="store_true", help="use softkmeans for few-shot transductive")
@@ -94,11 +116,18 @@ parser.add_argument("--transductive-temperature-softkmeans", type=float, default
 parser.add_argument("--transductive-alpha", type=float, default=0.84, help="momentum for few-shot transductive")
 parser.add_argument("--transductive-cosine", action="store_true", help="use cosine similarity for few-shot evaluation")
 
+parser.add_argument("--label-noise", type=float, default=0, help="label noise level in meta dataset")
+parser.add_argument("--label-noise-test", type=float, default=0, help="label noise level in meta dataset")
+
+
 try :
     get_ipython()
     args = parser.parse_args(args=[])
 except :
     args = parser.parse_args()
+
+if torch.cuda.device_count() == 1:
+    args.device = 'cuda:0'
 
 ### process arguments
 if args.dataset_device == "":
@@ -107,13 +136,17 @@ if args.dataset_device == "":
 if args.dataset_path[-1] != '/':
     args.dataset_path += "/"
 
+
+
 if args.device[:5] == "cuda:" and len(args.device) > 5:
     args.devices = []
     for i in range(len(args.device) - 5):
+        print(f'device={int(args.device[i+5])}')
         args.devices.append(int(args.device[i+5]))
     args.device = args.device[:6]
 else:
     args.devices = [args.device]
+
 
 if args.seed == -1:
     args.seed = random.randint(0, 1000000000)
@@ -140,5 +173,6 @@ if args.gamma == -1:
 
 if args.mm:
     args.mixup = True
-    
+
+
 print("args, ", end='')

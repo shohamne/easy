@@ -3,6 +3,7 @@ from args import *
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import rff
 
 class BasicBlockRN12(nn.Module):
     def __init__(self, in_planes, planes):
@@ -30,16 +31,23 @@ class BasicBlockRN12(nn.Module):
     
 class ResNet12(nn.Module):
     def __init__(self, feature_maps, input_shape, num_classes, few_shot, rotations):
-        super(ResNet12, self).__init__()        
-        layers = []
+        super(ResNet12, self).__init__()
+        orig_feature_dim = 10 * feature_maps        
+        layers = [] 
         layers.append(BasicBlockRN12(input_shape[0], feature_maps))
         layers.append(BasicBlockRN12(feature_maps, int(2.5 * feature_maps)))
         layers.append(BasicBlockRN12(int(2.5 * feature_maps), 5 * feature_maps))
-        layers.append(BasicBlockRN12(5 * feature_maps, 10 * feature_maps))        
+        layers.append(BasicBlockRN12(5 * feature_maps, orig_feature_dim))        
         self.layers = nn.Sequential(*layers)
-        self.linear = linear(10 * feature_maps, num_classes)
+        feature_dim = orig_feature_dim if args.feature_dim == -1 else args.feature_dim  
+        if args.feature_dim != -1:
+            if args.encoding == 'rff':
+                self.encoding = rff.layers.GaussianEncoding(sigma=1, input_size=feature_dim, encoded_size=int(feature_dim/2))
+            else:
+                self.T = nn.parameter.Parameter(data=torch.randn([orig_feature_dim, feature_dim])/(orig_feature_dim)**0.5, requires_grad=False)
+        self.linear = linear(feature_dim, num_classes)    
         self.rotations = rotations
-        self.linear_rot = linear(10 * feature_maps, 4)
+        self.linear_rot = linear(feature_dim, 4)
         self.mp = nn.MaxPool2d((2,2))
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -63,8 +71,21 @@ class ResNet12(nn.Module):
             out = self.mp(F.leaky_relu(out, negative_slope = 0.1))
         out = F.avg_pool2d(out, out.shape[2])
         features = out.view(out.size(0), -1)
-        out = self.linear(features)
+        if args.feature_dim != -1:
+            if args.encoding == 'rff':
+                features = F.normalize(self.encoding(features), dim=1)
+            else:
+                features = features @ self.T
+
+        if args.distance:
+            out = (features**2).sum(dim=1, keepdim=True) \
+                - 2*features @ self.linear.weight.t() \
+                + (self.linear.weight**2).sum(dim=1, keepdim=True).t()
+            out = out**0.5
+        else:
+            out = self.linear(features)
         if self.rotations:
             out_rot = self.linear_rot(features)
             return (out, out_rot), features
+
         return out, features
