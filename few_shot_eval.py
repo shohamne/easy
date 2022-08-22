@@ -79,17 +79,49 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
             runs_aug = generate_runs(flat_features, run_classes, run_indices, batch_idx).to(args.device)
             runs = runs_aug.reshape([runs_aug.shape[0], runs_aug.shape[1], -1, aug, dim]).mean(dim=3)
             runs_aug = runs_aug.reshape([runs.shape[0], runs.shape[1], -1, dim])
-            means = torch.mean(runs[:,:,:n_shots], dim = 2)
-            distances = torch.norm(runs[:,:,n_shots:].reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+            supports = runs[:,:,:n_shots]
+            queries = runs[:,:,n_shots:]
+            means = torch.mean(supports, dim = 2)
+            distances = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
             winners = torch.min(distances, dim = 2)[1]
             scores += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
             n_test = runs.shape[2] - n_shots 
-
+            
+                        
             if args.save_features == "":
-                Z = runs[:,:,:n_shots]
-                medoids_inds = torch.cdist(Z,Z).sum(dim=3).argmin(dim=2)
-                medoids = Z.gather(2, medoids_inds.unsqueeze(2).unsqueeze(3).repeat([1,1,1,Z.shape[3]]))
-                distances_med = torch.norm(runs[:,:,n_shots:].reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medoids.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+                Z = supports
+
+                medians = means.unsqueeze(dim=2)
+                #medians = supports[:,:,1,:].clone().unsqueeze(dim=2)
+                c = 0.5
+                for i in range(20):
+                    errors = medians - supports
+                    print(f'{i} - median error: {errors.norm(dim=3).sum()}')
+                    # Poor man's Newton's method
+                    # denom = torch.sqrt(torch.sum(errors ** 2, axis=3, keepdims=True) + c ** 2)
+                    # dw = -torch.sum(errors / denom, axis=2, keepdims=True) / torch.sum(
+                    #     1.0 / denom, axis=2, keepdims=True
+                    # )
+                    # medians += dw
+
+                    # Weiszfeld's algorithm
+                    denom = errors.norm(dim=3).unsqueeze(3)
+                    medians = torch.sum(supports / denom, axis=2, keepdims=True) / torch.sum(
+                        1.0 / denom, axis=2, keepdims=True
+                    )
+                    
+
+                for i in range(100):
+                    errors = medians - supports
+                    print(f'{i} - median error: {errors.norm(dim=3).sum()}')
+                    
+
+
+                distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medians.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+
+                #medoids_inds = torch.cdist(Z,Z).sum(dim=3).argmin(dim=2)
+                #medoids = Z.gather(2, medoids_inds.unsqueeze(2).unsqueeze(3).repeat([1,1,1,Z.shape[3]]))
+                #distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medoids.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
 
                 winners = torch.min(distances_med, dim = 2)[1]
                 scores_med += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
@@ -120,6 +152,8 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
 
                 winners = torch.min(0.9*distances_med + 0.1*distances, dim = 2)[1]
                 scores_me9 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                
+                
 
                 X = runs_aug[:,:,:n_shots*aug].reshape(runs_aug.shape[0],-1,runs_aug.shape[3])
                 if args.bias:
