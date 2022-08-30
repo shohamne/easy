@@ -100,6 +100,7 @@ parser.add_argument("--wandb", type=str, default='', help="Report to wandb, inpu
 parser.add_argument("--n-shots", type=str, default="[1,5]", help="how many shots per few-shot run, can be int or list of ints. In case of episodic training, use first item of list as number of shots.")
 parser.add_argument("--n-runs", type=int, default=10000, help="number of few-shot runs")
 parser.add_argument("--n-ways", type=int, default=5, help="number of few-shot ways")
+parser.add_argument("--n-rand-winners", type=int, default=100, help="number of randomize rounds for majority vote")
 parser.add_argument("--n-unknown", type=int, default=5, help="number of unknown classes")
 parser.add_argument("--n-queries", type=int, default=15, help="number of few-shot queries")
 parser.add_argument("--sample-aug", type=int, default=1, help="number of versions of support/query samples (using random crop) 1 means no augmentation")
@@ -119,6 +120,7 @@ parser.add_argument("--transductive-cosine", action="store_true", help="use cosi
 
 parser.add_argument("--label-noise", type=float, default=0, help="label noise level in meta dataset")
 parser.add_argument("--label-noise-test", type=float, default=0, help="label noise level in meta dataset")
+parser.add_argument("--result-path", type=str, default=None, help="path to save result csv filr")
 
 
 try :

@@ -1,3 +1,4 @@
+import math
 import torch
 import numpy as np
 from args import *
@@ -69,6 +70,7 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
         scores_me7 = []
         scores_me8 = []
         scores_me9 = []
+        scores_maj = []
         neglogdets = []
         mses = []
         mses_svm = []
@@ -96,7 +98,7 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
                 c = 0.5
                 for i in range(20):
                     errors = medians - supports
-                    print(f'{i} - median error: {errors.norm(dim=3).sum()}')
+                    # print(f'{i} - median error: {errors.norm(dim=3).sum()}')
                     # Poor man's Newton's method
                     # denom = torch.sqrt(torch.sum(errors ** 2, axis=3, keepdims=True) + c ** 2)
                     # dw = -torch.sum(errors / denom, axis=2, keepdims=True) / torch.sum(
@@ -109,13 +111,6 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
                     medians = torch.sum(supports / denom, axis=2, keepdims=True) / torch.sum(
                         1.0 / denom, axis=2, keepdims=True
                     )
-                    
-
-                for i in range(100):
-                    errors = medians - supports
-                    print(f'{i} - median error: {errors.norm(dim=3).sum()}')
-                    
-
 
                 distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medians.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
 
@@ -153,7 +148,19 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
                 winners = torch.min(0.9*distances_med + 0.1*distances, dim = 2)[1]
                 scores_me9 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
                 
-                
+                rand_winners = torch.zeros(list(queries.shape[:-1])+[args.n_rand_winners], device=device, dtype=int)
+                for i in range(args.n_rand_winners):
+                    rand_support_inds = torch.torch.randint(0, n_shots, [math.prod(supports.shape[:-1])])
+                    linear_inds = torch.arange(math.prod(supports.shape[:-1]),dtype = int)//n_shots*n_shots
+                    rand_support_linear_inds = rand_support_inds + linear_inds
+                    rand_supports = supports.reshape([-1, dim])[rand_support_linear_inds].reshape(supports.shape)
+                    means = torch.mean(rand_supports, dim = 2)
+                    distances = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+                    winners = torch.min(distances, dim = 2)[1]
+                    rand_winners[:, :, :, i] = winners
+                majority_vote = rand_winners.mode(dim=3)[0]
+                scores_maj += list((majority_vote == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
 
                 X = runs_aug[:,:,:n_shots*aug].reshape(runs_aug.shape[0],-1,runs_aug.shape[3])
                 if args.bias:
@@ -197,6 +204,7 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
         return \
             stats(scores, ""), stats(scores_med, ""), stats(scores_me1, ""), stats(scores_me2, ""), stats(scores_me3, ""),stats(scores_me4, ""),\
             stats(scores_me5, ""), stats(scores_me6, ""), stats(scores_me7, ""), stats(scores_me8, ""), stats(scores_me9, ""),     \
+            stats(scores_maj, ""), \
             stats(scores_lin, ""), stats(neglogdets, ""), stats(mses, ""), stats(scores_svm, ""), stats(mses_svm, "") 
 
 def transductive_ncm(train_features, features, run_classes, run_indices, n_shots, n_iter_trans = args.transductive_n_iter, n_iter_trans_sinkhorn = args.transductive_n_iter_sinkhorn, temp_trans = args.transductive_temperature, alpha_trans = args.transductive_alpha, cosine = args.transductive_cosine, elements_train=None):
@@ -338,10 +346,12 @@ def evaluate_shot(index, train_features, val_features, novel_features, few_shot_
     ((val_acc, val_conf), (val_acc_med, val_conf_med),
     (val_acc_me1, val_conf_me1), (val_acc_me2, val_conf_me2), (val_acc_me3, val_conf_me3), (val_acc_me4, val_conf_me4), 
     (val_acc_me5, val_conf_me5), (val_acc_me6, val_conf_me6), (val_acc_me7, val_conf_me7), (val_acc_me8, val_conf_me8), (val_acc_me9, val_conf_me9), 
+    (val_acc_maj, val_conf_maj), 
     (val_acc_lin, val_conf_lin), (val_nld, val_conf_nld), (val_mse, val_conf_mse), (val_svm, val_conf_svm), (val_mvm, val_conf_mvm)), 
     ((novel_acc, novel_conf), (novel_acc_med, novel_conf_med), 
     (novel_acc_me1, novel_conf_me1), (novel_acc_me2, novel_conf_me2), (novel_acc_me3, novel_conf_me3), (novel_acc_me4, novel_conf_me4), 
     (novel_acc_me5, novel_conf_me5), (novel_acc_me6, novel_conf_me6), (novel_acc_me7, novel_conf_me7), (novel_acc_me8, novel_conf_me8), (novel_acc_me9, novel_conf_me9), 
+    (novel_acc_maj, novel_conf_maj),
     (novel_acc_lin, novel_conf_lin), (novel_nld, novel_conf_nld), (novel_mse, novel_conf_mse), (novel_svm, novel_conf_svm), (novel_mvm, novel_conf_mvm)) 
     )= eval_few_shot(train_features, val_features, novel_features, few_shot_meta_data["val_run_classes"][index], few_shot_meta_data["val_run_indices"][index], few_shot_meta_data["novel_run_classes"][index], few_shot_meta_data["novel_run_indices"][index], args.n_shots[index], transductive = transductive, elements_train=few_shot_meta_data["elements_train"])
     if val_acc > few_shot_meta_data["best_val_acc"][index]:
@@ -366,7 +376,8 @@ def evaluate_shot(index, train_features, val_features, novel_features, few_shot_
             val_acc_me6, val_conf_me6, novel_acc_me6, novel_conf_me6,
             val_acc_me7, val_conf_me7, novel_acc_me7, novel_conf_me7,
             val_acc_me8, val_conf_me8, novel_acc_me8, novel_conf_me8,
-            val_acc_me9, val_conf_me9, novel_acc_me9, novel_conf_me9, 
+            val_acc_me9, val_conf_me9, novel_acc_me9, novel_conf_me9,
+            val_acc_maj, val_conf_maj, novel_acc_maj, novel_conf_maj, 
             val_acc_lin, val_conf_lin, novel_acc_lin, novel_conf_lin, 
             val_nld,     val_conf_nld, novel_nld,     novel_conf_nld, 
             val_mse,     val_conf_mse, novel_mse,     novel_conf_mse,

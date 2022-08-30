@@ -372,6 +372,7 @@ if args.test_features != "":
         filenames = args.test_features
     if isinstance(filenames, str):
         filenames = [filenames]
+    print(f'filenames={filenames}, {len(filenames)=}')
     test_features = torch.cat([torch.load(fn, map_location=torch.device(args.device)).to(args.dataset_device) for fn in filenames], dim = 2)
     if len(test_features.shape) == 4:
         test_features = test_features.reshape(test_features.shape[0], test_features.shape[1], args.sample_aug, -1, test_features.shape[3]).mean(dim=3)
@@ -395,7 +396,8 @@ if args.test_features != "":
             val_acc_me6, val_conf_me6, test_acc_me6, test_conf_me6, 
             val_acc_me7, val_conf_me7, test_acc_me7, test_conf_me7, 
             val_acc_me8, val_conf_me8, test_acc_me8, test_conf_me8, 
-            val_acc_me9, val_conf_me9, test_acc_me9, test_conf_me9,  
+            val_acc_me9, val_conf_me9, test_acc_me9, test_conf_me9,
+            val_acc_maj, val_conf_maj, test_acc_maj, test_conf_maj,  
             val_acc_lin, val_conf_lin, test_acc_lin, test_conf_lin, 
             val_nld, val_conf_nld, test_nld, test_conf_nld,
             val_mse, val_conf_mse, test_mse, test_conf_mse,
@@ -414,6 +416,7 @@ if args.test_features != "":
                   f"me8: {100 * test_acc_me8:.2f}% (± {100 * test_conf_med:.2f}%) "
                   f"me9: {100 * test_acc_me9:.2f}% (± {100 * test_conf_med:.2f}%) "
                   f"med: {100 * test_acc_med:.2f}% (± {100 * test_conf_med:.2f}%) "
+                  f"maj: {100 * test_acc_maj:.2f}% (± {100 * test_conf_maj:.2f}%) "
                   f"lin: {100 * test_acc_lin:.2f}% (± {100 * test_conf_lin:.2f}%) "
                   f"nld: {100 * test_nld:.2f}% (± {100 * test_conf_nld:.2f}%) "
                   f"mse: {100 * test_mse:.2f}% (± {100 * test_conf_mse:.2f}%) "
@@ -430,7 +433,8 @@ if args.test_features != "":
                 val_acc_me7=val_acc_me7, val_conf_me7=val_conf_me7, test_acc_me7=test_acc_me7, test_conf_me7=test_conf_me7,
                 val_acc_me8=val_acc_me8, val_conf_me8=val_conf_me8, test_acc_me8=test_acc_me8, test_conf_me8=test_conf_me8,
                 val_acc_me9=val_acc_me9, val_conf_me9=val_conf_me9, test_acc_me9=test_acc_me9, test_conf_me9=test_conf_me9,
-                val_acc_med=val_acc_med, val_conf_med=val_conf_med, test_acc_med=test_acc_med, test_conf_med=test_conf_med,  
+                val_acc_med=val_acc_med, val_conf_med=val_conf_med, test_acc_med=test_acc_med, test_conf_med=test_conf_med, 
+                val_acc_maj=val_acc_maj, val_conf_maj=val_conf_maj, test_acc_maj=test_acc_maj, test_conf_maj=test_conf_maj,  
                 val_acc_lin=val_acc_lin, val_conf_lin=val_conf_lin, test_acc_lin=test_acc_lin, test_conf_lin=test_conf_lin, 
                 val_nld    =val_nld    , val_conf_nld=val_conf_nld, test_nld    =test_nld    , test_conf_nld=test_conf_nld,
                 val_mse    =val_mse    , val_conf_mse=val_conf_mse, test_mse    =test_mse    , test_conf_mse=test_conf_mse,
@@ -438,7 +442,8 @@ if args.test_features != "":
                 val_mvm    =val_mvm    , val_conf_mvm=val_conf_mvm, test_mvm    =test_mvm    , test_conf_mvm=test_conf_mvm)
             result.append(res)
         import pandas as pd
-        pd.DataFrame(result).to_csv(args.test_features + f".lam{args.lam}_nt{args.label_noise_test}"+ '.csv')
+        result_path = args.test_features + f".lam{args.lam}_nt{args.label_noise_test}"+ '.csv' if args.result_path is None else args.result_path
+        pd.DataFrame(result).to_csv(result_path)
         
     else:
         for i in range(len(args.n_shots)):
