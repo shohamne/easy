@@ -21,6 +21,8 @@ import wideresnet
 import resnet12
 import s2m2
 import mlp
+from loss import NCEandRCE
+
 print("models.")
 if args.ema > 0:
     from torch_ema import ExponentialMovingAverage
@@ -106,6 +108,9 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
                 loss = crit(output, features, target)
         if  args.symmetric_loss > 0.0:
             loss += args.symmetric_loss * symmetric_loss(output, target) 
+        if args.apl_alpha > 0.0 or args.beta > 0.0:
+            loss += NCEandRCE(args.apl_alpha, args.apl_beta, num_classes)(output, target)
+
         orig_losses += loss.item()* data.shape[0]
         if args.logdet_factor is not None and torch.is_tensor(m):
             v = features 
@@ -121,7 +126,6 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
             loss += args.logdet_factor*neglogdet_loss
         # backprop loss
         loss.backward()
-            
         losses += loss.item() * data.shape[0]
         total += data.shape[0]
         # update parameters
