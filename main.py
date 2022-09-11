@@ -108,10 +108,9 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
                 loss = crit(output, features, target)
         if  args.symmetric_loss > 0.0:
             loss += args.symmetric_loss * symmetric_loss(output, target) 
-        if args.apl_alpha > 0.0 or args.beta > 0.0:
+        if args.apl_alpha > 0.0 or args.apl_beta > 0.0:
             loss += NCEandRCE(args.apl_alpha, args.apl_beta, num_classes)(output, target)
         if args.star_loss_gamma > 0.0:
-            print('YYYYYYYYYYYY')
             loss += StarLoss(args.star_loss_gamma)(output, target)
 
         orig_losses += loss.item()* data.shape[0]
