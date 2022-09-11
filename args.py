@@ -77,6 +77,8 @@ parser.add_argument("--exp-factor", type=float, default=0.1, help="exponential a
 parser.add_argument("--svm-c", type=float, default=0.1, help="exponential average factor")
 parser.add_argument("--apl-alpha", type=float, default=0.0, help="active passive loss alpha param")
 parser.add_argument("--apl-beta", type=float, default=0.0, help="active passive loss alpha param")
+parser.add_argument("--star-loss-gamma", type=float, default=0.0, help="star loss alpha param")
+
 
 ### pytorch options
 parser.add_argument("--device", type=str, default="cuda:0", help="device(s) to use, for multiple GPUs try cuda:ijk, will not work with 10+ GPUs")

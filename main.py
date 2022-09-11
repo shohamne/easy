@@ -21,7 +21,7 @@ import wideresnet
 import resnet12
 import s2m2
 import mlp
-from loss import NCEandRCE
+from loss import NCEandRCE, StarLoss
 
 print("models.")
 if args.ema > 0:
@@ -110,6 +110,9 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
             loss += args.symmetric_loss * symmetric_loss(output, target) 
         if args.apl_alpha > 0.0 or args.beta > 0.0:
             loss += NCEandRCE(args.apl_alpha, args.apl_beta, num_classes)(output, target)
+        if args.star_loss_gamma > 0.0:
+            print('YYYYYYYYYYYY')
+            loss += StarLoss(args.star_loss_gamma)(output, target)
 
         orig_losses += loss.item()* data.shape[0]
         if args.logdet_factor is not None and torch.is_tensor(m):
