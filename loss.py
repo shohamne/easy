@@ -424,8 +424,10 @@ class StarLoss(torch.nn.Module):
     
     def forward(self, output, target):
         num_classes = output.shape[-1]
-        onehot_star = F.one_hot(target, num_classes) - 1/num_classes
-        loss = -output.dot(onehot_star) + self.gamma*F.log(F.exp(output).sum())
-        return loss.mean()
+        onehot_star = F.one_hot(target, num_classes)# - 1/num_classes
+        z = output - output.min(dim=1, keepdim=True)[0]
+        loss = -z.mul(onehot_star).sum(dim=1) + self.gamma * z.max(dim=1)[0]
+        ll = -output.mul(onehot_star).sum(dim=1) + self.gamma * output.max(dim=1)[0]
+        return loss.mean() 
 
 
