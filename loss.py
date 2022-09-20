@@ -418,7 +418,7 @@ class DMILoss(torch.nn.Module):
         return -1.0 * torch.log(torch.abs(torch.det(mat.float())) + 0.001)
 
 class StarLoss(torch.nn.Module):
-    def __init__(self, num_classes, gamma):
+    def __init__(self, gamma):
         super().__init__()
         self.gamma = gamma
     
@@ -426,5 +426,6 @@ class StarLoss(torch.nn.Module):
         num_classes = output.shape[-1]
         onehot_star = F.one_hot(target, num_classes) - 1/num_classes
         loss = -output.dot(onehot_star) + self.gamma*F.log(F.exp(output).sum())
+        return loss.mean()
 
 
