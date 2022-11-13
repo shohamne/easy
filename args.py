@@ -78,6 +78,9 @@ parser.add_argument("--svm-c", type=float, default=0.1, help="exponential averag
 parser.add_argument("--apl-alpha", type=float, default=0.0, help="active passive loss alpha param")
 parser.add_argument("--apl-beta", type=float, default=0.0, help="active passive loss alpha param")
 parser.add_argument("--star-loss-gamma", type=float, default=0.0, help="star loss alpha param")
+parser.add_argument("--no-mix-special-loss", action="store_true", help="mix special loss, if used, with standard cross entropy")
+parser.add_argument("--protonet-no-square", action="store_true", help="protonet based on norm dist instead of square norm")
+
 
 
 ### pytorch options
@@ -110,7 +113,7 @@ parser.add_argument("--n-queries", type=int, default=15, help="number of few-sho
 parser.add_argument("--sample-aug", type=int, default=1, help="number of versions of support/query samples (using random crop) 1 means no augmentation")
 parser.add_argument("--ncm-loss", action="store_true", help="use ncm output instead of linear")
 parser.add_argument("--episodic", action="store_true", help="use episodic training")
-parser.add_argument("--episodes-per-epoch", type=int, default=100, help="number of episodes per epoch")
+#parser.add_argument("--episodes-per-epoch", type=int, default=100, help="number of episodes per epoch")
 
 # only for transductive, used with "test-features"
 parser.add_argument("--transductive", action="store_true", help ="test features in transductive setting")
@@ -181,5 +184,7 @@ if args.gamma == -1:
 if args.mm:
     args.mixup = True
 
-
+if args.episodic:
+    assert args.batch_size % args.n_ways == 0
+    
 print("args, ", end='')

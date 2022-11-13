@@ -5,6 +5,8 @@ import torch.nn.functional as F
 import scipy.stats as st
 import numpy as np
 import random
+from loss import NCEandRCE, StarLoss
+
 
 ### generate random seeds
 random.seed(args.seed)
@@ -49,12 +51,40 @@ def linear(indim, outdim):
     else:
         return nn.Linear(indim, outdim)
 
+def criterion(output, target, num_classes):
+    special_criterion = None
+    if args.label_smoothing > 0:
+        special_criterion = LabelSmoothingLoss(num_classes = num_classes, smoothing = args.label_smoothing)
+    elif args.one_vs_all_logistic:
+        special_criterion = lambda x,y: one_vs_all_logistic(x,y)
+    elif args.apl_alpha > 0.0 or args.apl_beta > 0.0:
+        special_criterion = NCEandRCE(args.apl_alpha, args.apl_beta, num_classes)
+    elif args.star_loss_gamma > 0.0:
+        special_criterion = StarLoss(args.star_loss_gamma)
+    
+    def standard_criterion(x,y):
+        return torch.nn.CrossEntropyLoss()(x/args.temperature, y)
+    
+    if special_criterion is None:
+        return standard_criterion(output, target)
+    else:
+        if not args.no_mix_special_loss:
+            return standard_criterion(output, target) + special_criterion(output, target)
+        else:
+            return special_criterion(output, target)
+
 def criterion_episodic(features, targets, n_shots = args.n_shots[0]):
+    targets, sort_idx = targets.sort()
+    features = features[sort_idx]
     feat = features.reshape(args.n_ways, -1, features.shape[1])
     feat = preprocess(feat, feat)
     means = torch.mean(feat[:,:n_shots], dim = 1)
-    dists = torch.norm(feat[:,n_shots:].unsqueeze(2) - means.unsqueeze(0).unsqueeze(0), dim = 3, p = 2).reshape(-1, args.n_ways).pow(2)
-    return torch.nn.CrossEntropyLoss()(-1 * dists / args.temperature, targets.reshape(args.n_ways,-1)[:,n_shots:].reshape(-1))
+    dists = torch.norm(feat[:,n_shots:].unsqueeze(2) - means.unsqueeze(0).unsqueeze(0), dim = 3, p = 2).reshape(-1, args.n_ways)
+    if not args.protonet_no_square:
+        dists = dists.pow(2)
+    test_size = dists.shape[0]//args.n_ways
+    tar = torch.arange(0, args.n_ways, 1, device=means.device).repeat_interleave(test_size)
+    return criterion(-dists, tar, num_classes=args.n_ways)
 
 def sphering(features):
     return features / torch.norm(features, p = 2, dim = 2, keepdim = True)

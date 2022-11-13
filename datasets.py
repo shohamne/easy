@@ -136,12 +136,11 @@ def iterator(data, target, transforms, forcecpu = False, shuffle = True, use_hd 
     else:
         return Dataset(data, target, transforms, shuffle = shuffle)
 
-def episodic_iterator(data, num_classes, transforms, forcecpu = False, use_hd = False):
-    if args.dataset_device == "cpu" or forcecpu:
-        dataset = EpisodicCPUDataset(data, num_classes, transforms, use_hd = use_hd)
-        return torch.utils.data.DataLoader(dataset, batch_size = (args.batch_size // args.n_ways) * args.n_ways, shuffle = False, num_workers = min(8, os.cpu_count()))
-    else:
-        return EpisodicDataset(data, num_classes, transforms, use_hd = use_hd)
+def episodic_iterator(data, target, transforms, forcecpu = False, shuffle = True, use_hd = False):
+    dataset = CPUDataset(data, target, transforms, use_hd = use_hd)
+    batch_sampler = PrototypicalBatchSampler(labels=dataset.targets, classes_per_it=args.n_ways, 
+        num_samples=args.batch_size//args.n_ways, iterations=len(target)//args.batch_size)
+    return torch.utils.data.DataLoader(dataset, batch_sampler=batch_sampler, num_workers = 4, pin_memory=True)
 
 def create_dataset(train_data, test_data, train_targets, test_targets, train_transforms, test_transforms):
     train_loader = iterator(train_data[:args.dataset_size], train_targets[:args.dataset_size], transforms = train_transforms)
@@ -290,12 +289,12 @@ def cifarfs(use_hd=True, data_augmentation=True):
                                          transforms.CenterCrop(image_size), 
                                          norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(image_size, scale=(0.14,1)), norm)
 
+    for i in range(len(datasets['train'][1])):
+        if torch.rand(1) < args.label_noise:
+            datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))  
     if args.episodic:
-        train_loader = episodic_iterator(datasets['train'][0], 64, transforms = train_transforms, forcecpu=True, use_hd=True)
+        train_loader = episodic_iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     else:
-        for i in range(len(datasets['train'][1])):
-            if torch.rand(1) < args.label_noise:
-                datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))  
         train_loader = iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["val"][0], datasets["val"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -334,13 +333,13 @@ def miniImageNet(use_hd = True):
     norm = transforms.Normalize(np.array([x / 255.0 for x in [125.3, 123.0, 113.9]]), np.array([x / 255.0 for x in [63.0, 62.1, 66.7]]))
     train_transforms = torch.nn.Sequential(transforms.RandomResizedCrop(84), transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4), transforms.RandomHorizontalFlip(), norm)
     all_transforms = torch.nn.Sequential(transforms.Resize(92), transforms.CenterCrop(84), norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(84), norm)
+    for i in range(len(datasets['train'][1])):
+        if torch.rand(1) < args.label_noise:
+            datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))  
     if args.episodic:
-        train_loader = episodic_iterator(datasets["train"][0], 64, transforms = train_transforms, forcecpu = True, use_hd = True)
+        train_loader = episodic_iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     else:
-        for i in range(len(datasets['train'][1])):
-            if torch.rand(1) < args.label_noise:
-                datasets['train'][1][i] = np.random.choice(list(set(range(64)) - set([datasets['train'][1][i]])))   
-        train_loader = iterator(datasets["train"][0], datasets["train"][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
+        train_loader = iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["validation"][0], datasets["validation"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     test_loader = iterator(datasets["test"][0], datasets["test"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -410,13 +409,15 @@ def tieredImageNet(use_hd=True):
     norm = transforms.Normalize(np.array([x / 255.0 for x in [125.3, 123.0, 113.9]]), np.array([x / 255.0 for x in [63.0, 62.1, 66.7]]))
     train_transforms = torch.nn.Sequential(transforms.RandomResizedCrop(84), transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4), transforms.RandomHorizontalFlip(), norm)
     all_transforms = torch.nn.Sequential(transforms.Resize(92), transforms.CenterCrop(84), norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(84), norm)
+
+    for i in range(len(datasets['train_base'][1])):
+        if torch.rand(1) < args.label_noise:
+            datasets['train_base'][1][i] = np.random.choice(list(set(range(351)) - set([datasets['train_base'][1][i]])))  
     if args.episodic:
-        train_loader = episodic_iterator(datasets["train_base"][0], 351, transforms = train_transforms, forcecpu = True, use_hd = True)
+        train_loader = episodic_iterator(datasets['train_base'][0], datasets['train_base'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     else:
-        for i in range(len(datasets['train_base'][1])):
-            if torch.rand(1) < args.label_noise:
-                datasets['train_base'][1][i] = np.random.choice(list(set(range(20)) - set([datasets['train_base'][1][i]])))  
-        train_loader = iterator(datasets["train_base"][0], datasets["train_base"][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
+        train_loader = iterator(datasets['train_base'][0], datasets['train_base'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
+
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["val"][0], datasets["val"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     test_loader = iterator(datasets["test"][0], datasets["test"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -467,13 +468,13 @@ def fc100(use_hd=True):
     all_transforms = torch.nn.Sequential(transforms.Resize(92), 
                                          transforms.CenterCrop(image_size), 
                                          norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(image_size, scale=(0.14,1)), norm)
+    for i in range(len(datasets['train'][1])):
+        if torch.rand(1) < args.label_noise:
+            datasets['train'][1][i] = np.random.choice(list(set(range(60)) - set([datasets['train'][1][i]])))  
     if args.episodic:
-        train_loader = episodic_iterator(datasets["train"][0], 60, transforms = train_transforms, forcecpu = True, use_hd = True)
+        train_loader = episodic_iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     else:
-        for i in range(len(datasets['train'][1])):
-            if torch.rand(1) < args.label_noise:
-                datasets['train'][1][i] = np.random.choice(list(set(range(60)) - set([datasets['train'][1][i]])))  
-        train_loader = iterator(datasets["train"][0], datasets["train"][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
+        train_loader = iterator(datasets['train'][0], datasets['train'][1], transforms = train_transforms, forcecpu=True, use_hd = use_hd)
     train_clean = iterator(datasets["train"][0], datasets["train"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     val_loader = iterator(datasets["val"][0], datasets["val"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
     test_loader = iterator(datasets["test"][0], datasets["test"][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
@@ -669,3 +670,71 @@ def get_dataset(dataset_name):
         print("Unknown dataset!")
 
 print("datasets, ", end='')
+
+
+class PrototypicalBatchSampler(object):
+    '''
+    PrototypicalBatchSampler: yield a batch of indexes at each iteration.
+    Indexes are calculated by keeping in account 'classes_per_it' and 'num_samples',
+    In fact at every iteration the batch indexes will refer to  'num_support' + 'num_query' samples
+    for 'classes_per_it' random classes.
+    __len__ returns the number of episodes per epoch (same as 'self.iterations').
+    '''
+
+    def __init__(self, labels, classes_per_it, num_samples, iterations):
+        '''
+        Initialize the PrototypicalBatchSampler object
+        Args:
+        - labels: an iterable containing all the labels for the current dataset
+        samples indexes will be infered from this iterable.
+        - classes_per_it: number of random classes for each iteration
+        - num_samples: number of samples for each iteration for each class (support + query)
+        - iterations: number of iterations (episodes) per epoch
+        '''
+        super(PrototypicalBatchSampler, self).__init__()
+        self.labels = labels
+        self.classes_per_it = classes_per_it
+        self.sample_per_class = num_samples
+        self.iterations = iterations
+
+        self.classes, self.counts = np.unique(self.labels, return_counts=True)
+        self.classes = torch.LongTensor(self.classes)
+
+        # create a matrix, indexes, of dim: classes X max(elements per class)
+        # fill it with nans
+        # for every class c, fill the relative row with the indices samples belonging to c
+        # in numel_per_class we store the number of samples for each class/row
+        self.idxs = range(len(self.labels))
+        self.indexes = np.empty((len(self.classes), max(self.counts)), dtype=int) * np.nan
+        self.indexes = torch.Tensor(self.indexes)
+        self.numel_per_class = torch.zeros_like(self.classes)
+        for idx, label in enumerate(self.labels):
+            label_idx = np.argwhere(self.classes == label).item()
+            self.indexes[label_idx, np.where(np.isnan(self.indexes[label_idx]))[0][0]] = idx
+            self.numel_per_class[label_idx] += 1
+
+    def __iter__(self):
+        '''
+        yield a batch of indexes
+        '''
+        spc = self.sample_per_class
+        cpi = self.classes_per_it
+
+        for it in range(self.iterations):
+            batch_size = spc * cpi
+            batch = torch.LongTensor(batch_size)
+            c_idxs = torch.randperm(len(self.classes))[:cpi]
+            for i, c in enumerate(self.classes[c_idxs]):
+                s = slice(i * spc, (i + 1) * spc)
+                # FIXME when torch.argwhere will exists
+                label_idx = torch.arange(len(self.classes)).long()[self.classes == c].item()
+                sample_idxs = torch.randperm(self.numel_per_class[label_idx])[:spc]
+                batch[s] = self.indexes[label_idx][sample_idxs]
+            batch = batch[torch.randperm(len(batch))]
+            yield batch
+
+    def __len__(self):
+        '''
+        returns the number of iterations (episodes) per epoch
+        '''
+        return self.iterations

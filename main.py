@@ -21,7 +21,6 @@ import wideresnet
 import resnet12
 import s2m2
 import mlp
-from loss import NCEandRCE, StarLoss
 
 print("models.")
 if args.ema > 0:
@@ -35,18 +34,16 @@ symmetric_loss = SymmetricLoss()
 ### global variables that are used by the train function
 last_update, criterion = 0, torch.nn.CrossEntropyLoss()
 ### function to either use criterion based on output and target or criterion_episodic based on features and target
+
+
+
 def crit(output, features, target):
-    if args.one_vs_all_logistic:
-        return 0.5*one_vs_all_logistic(output, target) \
-            + 0.5*torch.nn.CrossEntropyLoss()(output, target)
     if args.episodic:
         return criterion_episodic(features, target)
     else:
-        if args.label_smoothing > 0:
-            criterion = LabelSmoothingLoss(num_classes = num_classes, smoothing = args.label_smoothing)
-        else:
-            criterion = torch.nn.CrossEntropyLoss() 
-        return criterion(output, target)
+        return criterion(output, target, num_classes)
+ 
+
 
 ### main train function
 def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False, mm = False):
@@ -108,10 +105,6 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
                 loss = crit(output, features, target)
         if  args.symmetric_loss > 0.0:
             loss += args.symmetric_loss * symmetric_loss(output, target) 
-        if args.apl_alpha > 0.0 or args.apl_beta > 0.0:
-            loss += NCEandRCE(args.apl_alpha, args.apl_beta, num_classes)(output, target)
-        if args.star_loss_gamma > 0.0:
-            loss += StarLoss(args.star_loss_gamma)(output, target)
 
         orig_losses += loss.item()* data.shape[0]
         if args.logdet_factor is not None and torch.is_tensor(m):
