@@ -1,5 +1,6 @@
 ### global imports
 import math
+from cv2 import transform
 import torch
 import numpy as np
 import torch.nn as nn
@@ -37,18 +38,73 @@ last_update, criterion = 0, torch.nn.CrossEntropyLoss()
 
 
 
+def criterion_transformer(features, targets, n_shots = args.n_shots[0]):
+    targets, sort_idx = targets.sort()
+    features = features[sort_idx]
+    feat = features.reshape(args.n_ways, -1, features.shape[1])
+    support = feat[:,:n_shots].reshape(-1, features.shape[1])
+    query = feat[:,n_shots:].reshape(-1, features.shape[1])
+    n_queries = feat.shape[1] - n_shots
+    support_labels = torch.repeat_interleave(torch.arange(args.n_ways), n_shots).to(features.device)
+    query_labels = torch.repeat_interleave(torch.arange(args.n_ways), n_queries).to(features.device)
+
+    pred = model.transform(support.unsqueeze(0), support_labels.unsqueeze(0), query.unsqueeze(0))
+    return criterion(pred.squeeze(0), query_labels)
+
 def crit(output, features, target):
+    if args.transformer:
+        return criterion_transformer(features, target)
     if args.episodic:
         return criterion_episodic(features, target)
     else:
         return criterion(output, target, num_classes)
  
 
+def train_transformer(model, optimizer, epoch, scheduler):
+    elems_train = [elements_per_class] * num_classes if elements_train is None else elements_train
+    run_classes, run_indices = few_shot_eval.define_runs(args.n_ways + args.n_unknown, args.n_shots[0], args.n_queries, num_classes, elems_train)  
+    features = train_features
+    targets = torch.arange(args.n_ways).unsqueeze(1).unsqueeze(0).to(args.device)
+    losses, total = 0., 0
+    for batch_idx in range(args.n_runs // args.batch_fs):
+        optimizer.zero_grad()
+        #print(f"{batch_idx+1} / {(args.n_runs // args.batch_fs)}")
+        flat_features = features.reshape([features.shape[0], features.shape[1], -1])
+        runs = few_shot_eval.generate_runs(flat_features, run_classes, run_indices, batch_idx)
+        runs = runs.to(args.device)
+        supports = runs[:,:,:n_shots]
+        queries = runs[:,:,n_shots:]
+        _, n_ways, n_class_samples, _ = runs.shape
+        labels = torch.repeat_interleave(targets, n_class_samples).reshape(n_ways, n_class_samples).unsqueeze(0).repeat(args.batch_fs, 1, 1)
+        support_labels = labels[:,:,:n_shots]
+        query_labels = labels[:,:,n_shots:]
+        support_labels = support_labels.reshape([support_labels.shape[0], -1])
+        query_labels = query_labels.reshape([query_labels.shape[0], -1])
+        supports = supports.reshape([supports.shape[0], -1, supports.shape[-1]])
+        queries = queries.reshape([queries.shape[0], -1, queries.shape[-1]])
+        preds = model.transform(supports, support_labels, queries)
+        loss = criterion(preds.reshape(-1, preds.shape[-1]), query_labels.flatten())
+        loss.backward()
+        losses += loss.item() * preds.shape[0] * preds.shape[1]
+        total += preds.shape[0] * preds.shape[1]
+        # update parameters
+        optimizer.step()
+        scheduler.step()
+        length = args.n_runs//args.batch_fs
+        print_train(epoch, scheduler, losses, np.nan, np.nan, total, batch_idx, length)
+
+
+    return {
+        "loss": losses / total,
+        "orig_loss": np.nan,
+        }
+
+
+
 
 ### main train function
 def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False, mm = False):
     model.train()
-    global last_update
     losses, neglogdet_losses, orig_losses, total = 0., 0., 0., 0
     for batch_idx, (data, target) in enumerate(train_loader):
             
@@ -106,7 +162,7 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
         if  args.symmetric_loss > 0.0:
             loss += args.symmetric_loss * symmetric_loss(output, target) 
 
-        orig_losses += loss.item()* data.shape[0]
+        orig_losses += loss.item() * data.shape[0]
         if args.logdet_factor is not None and torch.is_tensor(m):
             v = features 
             if args.preprocessing[0] == 'P':
@@ -133,18 +189,8 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
             length = args.dataset_size // args.batch_size + (1 if args.dataset_size % args.batch_size != 0 else 0)
         else:
             length = len(train_loader)
-        # print advances if at least 100ms have passed since last print
-        if (batch_idx + 1 == length) or (time.time() - last_update > 0.1) and not args.quiet:
-            if batch_idx + 1 < length:
-                print(f"\r{epoch:4d} {1 + batch_idx:4d} / {length:4d} "
-                      f"loss: { losses / total:.5f} "
-                      f"orig_loss: { orig_losses / total:.5f} "
-                      f"neglogdet: { neglogdet_losses / total:.5f} "
-                      f"time: {format_time(time.time() - start_time):s} "
-                      f"lr: {float(scheduler.get_last_lr()[0]):.5f} ", end = "")
-            else:
-                print("\r{:4d} loss: {:.5f} ".format(epoch, losses / total), end = '')
-            last_update = time.time()
+
+        print_train(epoch, scheduler, losses, neglogdet_losses, orig_losses, total, batch_idx, length)
 
         if few_shot and total >= args.dataset_size and args.dataset_size > 0:
             break
@@ -157,6 +203,21 @@ def train(model, train_loader, optimizer, epoch, scheduler, F_, m, mixup = False
         "loss": losses / total,
         "orig_loss": orig_losses / total,
         }
+
+def print_train(epoch, scheduler, losses, neglogdet_losses, orig_losses, total, batch_idx, length):
+    # print advances if at least 100ms have passed since last print
+    global last_update
+    if (batch_idx + 1 == length) or (time.time() - last_update > 0.1) and not args.quiet:
+        if batch_idx + 1 < length:
+            print(f"\r{epoch:4d} {1 + batch_idx:4d} / {length:4d} "
+                      f"loss: { losses / total:.5f} "
+                      f"orig_loss: { orig_losses / total:.5f} "
+                      f"neglogdet: { neglogdet_losses / total:.5f} "
+                      f"time: {format_time(time.time() - start_time):s} "
+                      f"lr: {float(scheduler.get_last_lr()[0]):.5f} ", end = "")
+        else:
+            print("\r{:4d} loss: {:.5f} ".format(epoch, losses / total), end = '')
+        last_update = time.time()
 
 
 # function to compute accuracy in the case of standard classification
@@ -231,7 +292,10 @@ def train_complete(model, loaders, mixup = False):
             else:
                 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones = list(np.array(args.milestones) * length), gamma = args.gamma)
 
-        train_stats = train(model, train_loader, optimizer, (epoch + 1), scheduler, F_, m, mixup = mixup, mm = epoch >= args.epochs)        
+        if args.transformer and args.test_features != '':
+            train_stats = train_transformer(model, optimizer, (epoch + 1), scheduler) 
+        else:           
+            train_stats = train(model, train_loader, optimizer, (epoch + 1), scheduler, F_, m, mixup = mixup, mm = epoch >= args.epochs)        
         
         if args.save_model != "" and not few_shot:
             if len(args.devices) == 1:
@@ -245,7 +309,7 @@ def train_complete(model, loaders, mixup = False):
                     ema.store()
                     ema.copy_to()
                 with torch.no_grad():
-                    res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data)
+                    res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, test_features, transform=model.transform)
                     if args.preprocessing[0] == 'P':
                         features = features ** 0.5
                     m = features.mean(dim=0, keepdim=True)
@@ -292,7 +356,7 @@ def train_complete(model, loaders, mixup = False):
             if args.ema > 0:
                 ema.store()
                 ema.copy_to()
-            res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data)
+            res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, test_features, transform=model.transform)
             if args.ema > 0:
                 ema.restore()
         else:
@@ -363,7 +427,7 @@ def create_model():
     if args.model.lower() == "s2m2r":
         return s2m2.S2M2R(args.feature_maps, input_shape, args.rotations, num_classes = num_classes).to(args.device)
 
-if args.test_features != "":
+def load_features(num_classes, val_classes):
     try:
         print(f'args.test_features={args.test_features}')
         filenames = eval(args.test_features)
@@ -379,9 +443,14 @@ if args.test_features != "":
     train_features = test_features[:num_classes]
     val_features = test_features[num_classes:num_classes + val_classes]
     test_features = test_features[num_classes + val_classes:]
+    return test_features,train_features,val_features
 
+if args.test_features:
+    test_features, train_features, val_features = load_features(num_classes, val_classes)
+else:
+    test_features = train_features = val_features = None
 
-
+if args.test_features != "" and not args.transformer:
     if not args.transductive:
         result = []
         for i in range(len(args.n_shots)):
@@ -402,7 +471,7 @@ if args.test_features != "":
             val_mse, val_conf_mse, test_mse, test_conf_mse,
             val_svm, val_conf_svm, test_svm, test_conf_svm, 
             val_mvm, val_conf_mvm, test_mvm, test_conf_mvm) = \
-                few_shot_eval.evaluate_shot(i, train_features, val_features, test_features, few_shot_meta_data)
+                few_shot_eval.evaluate_shot(i, train_features, val_features, test_features, few_shot_meta_data, transform=model.transform)
             print(f"Inductive {args.n_shots[i]:d}-shot: "
                   f"acc: {100 * test_acc:.2f}% (± {100 * test_conf:.2f}%) "
                   f"me1: {100 * test_acc_me1:.2f}% (± {100 * test_conf_med:.2f}%) "
@@ -461,17 +530,35 @@ for i in range(args.runs):
             notes=str(vars(args))
             )
         wandb.log({"run": i})
-    model = create_model()
+    
+    if args.test_features != "" and args.transformer:
+        model = None
+    else:
+        model = create_model()
+
     if args.ema > 0:
         ema = ExponentialMovingAverage(model.parameters(), decay=args.ema)
+        
 
-    if args.load_model != "":
-        model.load_state_dict(torch.load(args.load_model, map_location=torch.device(args.device)))
+    backbone_output_dim = 640 if args.feature_dim == -1 else args.feature_dim
+    if args.test_features == "":
+        if args.load_model != "":
+            model.load_state_dict(torch.load(args.load_model, map_location=torch.device(args.device)))
+            model.to(args.device)
+
+        if len(args.devices) > 1:
+            model = torch.nn.DataParallel(model, device_ids = args.devices)
+        
+
+        if args.transformer:
+            model = FewShotTransformer(model, backbone_output_dim)
+            model.backbone.requires_grad_(False)
+            model.to(args.device)
+    else:
+        model = FewShotTransformer(None, backbone_output_dim)
         model.to(args.device)
 
-    if len(args.devices) > 1:
-        model = torch.nn.DataParallel(model, device_ids = args.devices)
-    
+
     if i == 0:
         print("Number of trainable parameters in model is: " + str(np.sum([p.numel() for p in model.parameters()])))
 

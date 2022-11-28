@@ -10,8 +10,8 @@ assert(n_runs % batch_few_shot_runs == 0)
 
 def define_runs(n_ways, n_shots, n_queries, num_classes, elements_per_class):
     shuffle_classes = torch.LongTensor(np.arange(num_classes))
-    run_classes = torch.LongTensor(n_runs, n_ways).to(args.device)
-    run_indices = torch.LongTensor(n_runs, n_ways, n_shots + n_queries).to(args.device)
+    run_classes = torch.LongTensor(n_runs, n_ways).to(args.dataset_device)
+    run_indices = torch.LongTensor(n_runs, n_ways, n_shots + n_queries).to(args.dataset_device)
     for i in range(n_runs):
         run_classes[i] = torch.randperm(num_classes)[:n_ways]
         for j in range(n_ways):
@@ -28,8 +28,8 @@ def generate_runs(data, run_classes, run_indices, batch_idx):
     indices_to_gather = indices_to_gather.unsqueeze(3).repeat(1, 1, 1, data.shape[2])
 
     rho = (args.label_noise_test * n_ways)/(n_ways - 1)
-    noisy_labels = torch.rand(classes_to_gather.shape[0], classes_to_gather.shape[1], classes_to_gather.shape[2]) < rho
-    new_labels = torch.randint(classes_to_gather.shape[1],[classes_to_gather.shape[0], classes_to_gather.shape[1], classes_to_gather.shape[2]])
+    noisy_labels = torch.rand(classes_to_gather.shape[0], classes_to_gather.shape[1], classes_to_gather.shape[2], device=args.dataset_device) < rho
+    new_labels = torch.randint(classes_to_gather.shape[1],[classes_to_gather.shape[0], classes_to_gather.shape[1], classes_to_gather.shape[2]]).to(args.dataset_device)
     new_labels = torch.gather(run_classes.unsqueeze(2).repeat(1, 1, new_labels.shape[2]), 1, new_labels)
     new_labels = new_labels.unsqueeze(3).repeat([1, 1, 1, classes_to_gather.shape[3]])
     noisy_labels = noisy_labels.unsqueeze(3).repeat([1, 1, 1, classes_to_gather.shape[3]])
@@ -50,7 +50,7 @@ def generate_runs(data, run_classes, run_indices, batch_idx):
 
     return res
 
-def ncm(train_features, features, run_classes, run_indices, n_shots, elements_train=None):
+def ncm(train_features, features, run_classes, run_indices, n_shots, elements_train=None, transform=None):
     with torch.no_grad():
         dim = features.shape[-1]
         aug = features.shape[2] if len(features.shape) == 4 else 1
@@ -83,123 +83,153 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
             runs_aug = runs_aug.reshape([runs.shape[0], runs.shape[1], -1, dim])
             supports = runs[:,:,:n_shots]
             queries = runs[:,:,n_shots:]
-            means = torch.mean(supports, dim = 2)
-            distances = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
-            winners = torch.min(distances, dim = 2)[1]
-            scores += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-            n_test = runs.shape[2] - n_shots 
-            
-                        
-            if args.save_features == "":
-                Z = supports
-
-                medians = means.unsqueeze(dim=2)
-                #medians = supports[:,:,1,:].clone().unsqueeze(dim=2)
-                c = 0.5
-                for i in range(20):
-                    errors = medians - supports
-                    # print(f'{i} - median error: {errors.norm(dim=3).sum()}')
-                    # Poor man's Newton's method
-                    # denom = torch.sqrt(torch.sum(errors ** 2, axis=3, keepdims=True) + c ** 2)
-                    # dw = -torch.sum(errors / denom, axis=2, keepdims=True) / torch.sum(
-                    #     1.0 / denom, axis=2, keepdims=True
-                    # )
-                    # medians += dw
-
-                    # Weiszfeld's algorithm
-                    denom = errors.norm(dim=3).unsqueeze(3)
-                    medians = torch.sum(supports / denom, axis=2, keepdims=True) / torch.sum(
-                        1.0 / denom, axis=2, keepdims=True
-                    )
-
-                distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medians.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
-
-                #medoids_inds = torch.cdist(Z,Z).sum(dim=3).argmin(dim=2)
-                #medoids = Z.gather(2, medoids_inds.unsqueeze(2).unsqueeze(3).repeat([1,1,1,Z.shape[3]]))
-                #distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medoids.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
-
-                winners = torch.min(distances_med, dim = 2)[1]
-                scores_med += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-                
-                winners = torch.min(0.1*distances_med + 0.9*distances, dim = 2)[1]
-                scores_me1 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.2*distances_med + 0.8*distances, dim = 2)[1]
-                scores_me2 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.3*distances_med + 0.7*distances, dim = 2)[1]
-                scores_me3 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.4*distances_med + 0.6*distances, dim = 2)[1]
-                scores_me4 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.5*distances_med + 0.5*distances, dim = 2)[1]
-                scores_me5 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.6*distances_med + 0.4*distances, dim = 2)[1]
-                scores_me6 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.7*distances_med + 0.3*distances, dim = 2)[1]
-                scores_me7 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.8*distances_med + 0.2*distances, dim = 2)[1]
-                scores_me8 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-                winners = torch.min(0.9*distances_med + 0.1*distances, dim = 2)[1]
-                scores_me9 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-                
-                rand_winners = torch.zeros(list(queries.shape[:-1])+[args.n_rand_winners], device=device, dtype=int)
-                for i in range(args.n_rand_winners):
-                    rand_support_inds = torch.torch.randint(0, n_shots, [math.prod(supports.shape[:-1])])
-                    linear_inds = torch.arange(math.prod(supports.shape[:-1]),dtype = int)//n_shots*n_shots
-                    rand_support_linear_inds = rand_support_inds + linear_inds
-                    rand_supports = supports.reshape([-1, dim])[rand_support_linear_inds].reshape(supports.shape)
-                    means = torch.mean(rand_supports, dim = 2)
-                    distances = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
-                    winners = torch.min(distances, dim = 2)[1]
-                    rand_winners[:, :, :, i] = winners
-                majority_vote = rand_winners.mode(dim=3)[0]
-                scores_maj += list((majority_vote == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-
-
-                X = runs_aug[:,:,:n_shots*aug].reshape(runs_aug.shape[0],-1,runs_aug.shape[3])
-                if args.bias:
-                    X = F.pad(X, (0,1), value=1)
-                b, n, d =  X.shape
-                device = X.device
-                Xt = X.transpose(2,1)
-                V = runs[:,:,n_shots:].reshape(runs.shape[0],-1,runs.shape[3])
-                if args.bias:
-                    V = F.pad(V, (0,1), value=1)
-                Y = torch.kron(torch.eye(args.n_ways, device=X.device)*(1+1/(args.n_ways-1))-1/(args.n_ways-1), torch.ones([n_shots*aug, 1], device=device))
-                Ytest = torch.kron(torch.eye(args.n_ways, device=X.device)*(1+1/(args.n_ways-1))-1/(args.n_ways-1), torch.ones([n_test, 1], device=device))
-                lam = args.lam/d
-                LAM = lam*torch.eye(d, device=X.device)
-                M = Xt @ X + LAM
-                Yhat = V @ M.inverse() @ Xt @ Y 
-                E = Yhat - Ytest.unsqueeze(0)
-                distances_lin = -Yhat
-                winners_lin = torch.min(distances_lin, dim = 2)[1].reshape(winners.shape)
-                scores_lin += list((winners_lin == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-                mses += list(E.pow(2).mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-                neglogdets += list(-torch.linalg.eigvalsh(M).log().sum(dim=1).cpu().numpy() + d*np.log(n/d + lam))
-            else:
+            batch_size, n_ways, n_class_samples, _ = runs.shape
+            if args.transformer:
+                labels = torch.repeat_interleave(targets, n_class_samples).reshape(n_ways, n_class_samples).unsqueeze(0).repeat(batch_size,1,1)
+                support_labels = labels[:,:,:n_shots]
+                query_labels = labels[:,:,n_shots:]
+                support_labels = support_labels.reshape([support_labels.shape[0], -1])
+                query_labels = query_labels.reshape([query_labels.shape[0], -1])
+                supports = supports.reshape([supports.shape[0], -1, supports.shape[-1]])
+                queries = queries.reshape([queries.shape[0], -1, queries.shape[-1]])
+                preds = transform(supports, support_labels, queries)[:,:,:args.n_ways]
+                winners = torch.argmax(preds, dim=2)
+                scores += list((winners == query_labels).float().mean(dim=1).to("cpu").numpy())
+                scores_maj.append(np.nan)
                 scores_lin.append(np.nan)
                 scores_med.append(np.nan)
                 mses.append(np.nan)
                 neglogdets.append(np.nan)
-
-            if args.svm_c >= 0 and args.save_features == "":
-                labels = torch.tile(torch.tile(torch.tensor(range(args.n_ways)).unsqueeze(1), (1, n_shots*aug)).flatten().unsqueeze(0), (b, 1)).to(device)
-                with torch.cuda.device(device), torch.no_grad():
-                    Ysvm = svm(V, X, labels, args.n_ways, n_shots*aug, args.svm_c)
-                distances_svm = -Ysvm
-                winners_svm = torch.min(distances_svm, dim = 2)[1].reshape(winners.shape)
-                scores_svm += list((winners_svm == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-                mses_svm += list((Ysvm - Ytest.unsqueeze(0)).pow(2).mean(dim = 1).mean(dim = 1).to("cpu").numpy())
-            else:
                 scores_svm.append(np.nan)
                 mses_svm.append(np.nan)
+                scores_med.append(np.nan)
+                scores_me1.append(np.nan) 
+                scores_me2.append(np.nan)
+                scores_me3.append(np.nan)
+                scores_me4.append(np.nan)
+                scores_me5.append(np.nan)
+                scores_me6.append(np.nan)
+                scores_me7.append(np.nan)
+                scores_me8.append(np.nan)
+                scores_me9.append(np.nan)
+            else:
+                means = torch.mean(supports, dim = 2)
+                distances = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+                winners = torch.min(distances, dim = 2)[1]
+                scores += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                n_test = runs.shape[2] - n_shots 
+                
+                            
+                if args.save_features == "":
+                    Z = supports
+
+                    medians = means.unsqueeze(dim=2)
+                    #medians = supports[:,:,1,:].clone().unsqueeze(dim=2)
+                    c = 0.5
+                    for i in range(20):
+                        errors = medians - supports
+                        # print(f'{i} - median error: {errors.norm(dim=3).sum()}')
+                        # Poor man's Newton's method
+                        # denom = torch.sqrt(torch.sum(errors ** 2, axis=3, keepdims=True) + c ** 2)
+                        # dw = -torch.sum(errors / denom, axis=2, keepdims=True) / torch.sum(
+                        #     1.0 / denom, axis=2, keepdims=True
+                        # )
+                        # medians += dw
+
+                        # Weiszfeld's algorithm
+                        denom = errors.norm(dim=3).unsqueeze(3)
+                        medians = torch.sum(supports / denom, axis=2, keepdims=True) / torch.sum(
+                            1.0 / denom, axis=2, keepdims=True
+                        )
+
+                    distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medians.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+
+                    #medoids_inds = torch.cdist(Z,Z).sum(dim=3).argmin(dim=2)
+                    #medoids = Z.gather(2, medoids_inds.unsqueeze(2).unsqueeze(3).repeat([1,1,1,Z.shape[3]]))
+                    #distances_med = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - medoids.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+
+                    winners = torch.min(distances_med, dim = 2)[1]
+                    scores_med += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                    
+                    winners = torch.min(0.1*distances_med + 0.9*distances, dim = 2)[1]
+                    scores_me1 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.2*distances_med + 0.8*distances, dim = 2)[1]
+                    scores_me2 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.3*distances_med + 0.7*distances, dim = 2)[1]
+                    scores_me3 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.4*distances_med + 0.6*distances, dim = 2)[1]
+                    scores_me4 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.5*distances_med + 0.5*distances, dim = 2)[1]
+                    scores_me5 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.6*distances_med + 0.4*distances, dim = 2)[1]
+                    scores_me6 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.7*distances_med + 0.3*distances, dim = 2)[1]
+                    scores_me7 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.8*distances_med + 0.2*distances, dim = 2)[1]
+                    scores_me8 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+                    winners = torch.min(0.9*distances_med + 0.1*distances, dim = 2)[1]
+                    scores_me9 += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                    
+                    rand_winners = torch.zeros(list(queries.shape[:-1])+[args.n_rand_winners], device=device, dtype=int)
+                    for i in range(args.n_rand_winners):
+                        rand_support_inds = torch.torch.randint(0, n_shots, [math.prod(supports.shape[:-1])])
+                        linear_inds = torch.arange(math.prod(supports.shape[:-1]),dtype = int)//n_shots*n_shots
+                        rand_support_linear_inds = rand_support_inds + linear_inds
+                        rand_supports = supports.reshape([-1, dim])[rand_support_linear_inds].reshape(supports.shape)
+                        means = torch.mean(rand_supports, dim = 2)
+                        distances = torch.norm(queries.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+                        winners = torch.min(distances, dim = 2)[1]
+                        rand_winners[:, :, :, i] = winners
+                    majority_vote = rand_winners.mode(dim=3)[0]
+                    scores_maj += list((majority_vote == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+
+
+                    X = runs_aug[:,:,:n_shots*aug].reshape(runs_aug.shape[0],-1,runs_aug.shape[3])
+                    if args.bias:
+                        X = F.pad(X, (0,1), value=1)
+                    b, n, d =  X.shape
+                    device = X.device
+                    Xt = X.transpose(2,1)
+                    V = runs[:,:,n_shots:].reshape(runs.shape[0],-1,runs.shape[3])
+                    if args.bias:
+                        V = F.pad(V, (0,1), value=1)
+                    Y = torch.kron(torch.eye(args.n_ways, device=X.device)*(1+1/(args.n_ways-1))-1/(args.n_ways-1), torch.ones([n_shots*aug, 1], device=device))
+                    Ytest = torch.kron(torch.eye(args.n_ways, device=X.device)*(1+1/(args.n_ways-1))-1/(args.n_ways-1), torch.ones([n_test, 1], device=device))
+                    lam = args.lam/d
+                    LAM = lam*torch.eye(d, device=X.device)
+                    M = Xt @ X + LAM
+                    Yhat = V @ M.inverse() @ Xt @ Y 
+                    E = Yhat - Ytest.unsqueeze(0)
+                    distances_lin = -Yhat
+                    winners_lin = torch.min(distances_lin, dim = 2)[1].reshape(winners.shape)
+                    scores_lin += list((winners_lin == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                    mses += list(E.pow(2).mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                    neglogdets += list(-torch.linalg.eigvalsh(M).log().sum(dim=1).cpu().numpy() + d*np.log(n/d + lam))
+                else:
+                    scores_lin.append(np.nan)
+                    scores_med.append(np.nan)
+                    mses.append(np.nan)
+                    neglogdets.append(np.nan)
+
+                if args.svm_c >= 0 and args.save_features == "":
+                    labels = torch.tile(torch.tile(torch.tensor(range(args.n_ways)).unsqueeze(1), (1, n_shots*aug)).flatten().unsqueeze(0), (b, 1)).to(device)
+                    with torch.cuda.device(device), torch.no_grad():
+                        Ysvm = svm(V, X, labels, args.n_ways, n_shots*aug, args.svm_c)
+                    distances_svm = -Ysvm
+                    winners_svm = torch.min(distances_svm, dim = 2)[1].reshape(winners.shape)
+                    scores_svm += list((winners_svm == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                    mses_svm += list((Ysvm - Ytest.unsqueeze(0)).pow(2).mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                else:
+                    scores_svm.append(np.nan)
+                    mses_svm.append(np.nan)
 
         return \
             stats(scores, ""), stats(scores_med, ""), stats(scores_me1, ""), stats(scores_me2, ""), stats(scores_me3, ""),stats(scores_me4, ""),\
@@ -317,31 +347,31 @@ def get_features(model, loader, n_aug = args.sample_aug):
     features_total = features_total / n_aug if args.average\
          else torch.cat(features_total, dim=2)
     return features_total
-def eval_few_shot(train_features, val_features, novel_features, val_run_classes, val_run_indices, novel_run_classes, novel_run_indices, n_shots, transductive = False,elements_train=None):
+def eval_few_shot(train_features, val_features, novel_features, val_run_classes, val_run_indices, novel_run_classes, novel_run_indices, n_shots, transductive = False,elements_train=None, transform=None):
     if transductive:
         if args.transductive_softkmeans:
             return softkmeans(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train), softkmeans(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train)
         else:
             return kmeans(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train), kmeans(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train)
     else:
-        return ncm(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train), ncm(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train)
+        return ncm(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train, transform=transform), ncm(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train, transform=transform)
 
-def update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data):
+def update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, novel_features, transform=None):
 
     if "M" in args.preprocessing or args.save_features != '':
-        train_features = get_features(model, train_clean)
+        train_features = get_features(model, train_clean) if train_features is None else train_features
     else:
-        train_features = torch.Tensor(0,0,0)
-    val_features = get_features(model, val_loader)
-    novel_features = get_features(model, novel_loader)
+        train_features = torch.Tensor(0,0,0) 
+    val_features = get_features(model, val_loader) if val_features is None else val_features
+    novel_features = get_features(model, novel_loader) if novel_features is None else novel_features
 
     res = []
     for i in range(len(args.n_shots)):
-        res.append(evaluate_shot(i, train_features, val_features, novel_features, few_shot_meta_data, model = model))
+        res.append(evaluate_shot(i, train_features, val_features, novel_features, few_shot_meta_data, model = model, transform=transform))
 
     return res, train_features.reshape(-1, train_features.shape[2])
 
-def evaluate_shot(index, train_features, val_features, novel_features, few_shot_meta_data, model = None, transductive = False):
+def evaluate_shot(index, train_features, val_features, novel_features, few_shot_meta_data, model = None, transductive = False, transform=None):
     (
     ((val_acc, val_conf), (val_acc_med, val_conf_med),
     (val_acc_me1, val_conf_me1), (val_acc_me2, val_conf_me2), (val_acc_me3, val_conf_me3), (val_acc_me4, val_conf_me4), 
@@ -353,7 +383,7 @@ def evaluate_shot(index, train_features, val_features, novel_features, few_shot_
     (novel_acc_me5, novel_conf_me5), (novel_acc_me6, novel_conf_me6), (novel_acc_me7, novel_conf_me7), (novel_acc_me8, novel_conf_me8), (novel_acc_me9, novel_conf_me9), 
     (novel_acc_maj, novel_conf_maj),
     (novel_acc_lin, novel_conf_lin), (novel_nld, novel_conf_nld), (novel_mse, novel_conf_mse), (novel_svm, novel_conf_svm), (novel_mvm, novel_conf_mvm)) 
-    )= eval_few_shot(train_features, val_features, novel_features, few_shot_meta_data["val_run_classes"][index], few_shot_meta_data["val_run_indices"][index], few_shot_meta_data["novel_run_classes"][index], few_shot_meta_data["novel_run_indices"][index], args.n_shots[index], transductive = transductive, elements_train=few_shot_meta_data["elements_train"])
+    )= eval_few_shot(train_features, val_features, novel_features, few_shot_meta_data["val_run_classes"][index], few_shot_meta_data["val_run_indices"][index], few_shot_meta_data["novel_run_classes"][index], few_shot_meta_data["novel_run_indices"][index], args.n_shots[index], transductive = transductive, elements_train=few_shot_meta_data["elements_train"], transform=transform)
     if val_acc > few_shot_meta_data["best_val_acc"][index]:
         if val_acc > few_shot_meta_data["best_val_acc_ever"][index]:
             few_shot_meta_data["best_val_acc_ever"][index] = val_acc

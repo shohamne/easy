@@ -157,3 +157,59 @@ def one_vs_all_logistic(input, target, m=0.0, t=1.0):
     return 2*logistic.mean()
 
 print("utils, ", end='')
+
+class ClassEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, n_classes: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(n_classes).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(n_classes, d_model)
+        pe[:,  0::2] = torch.sin(position * div_term)
+        pe[:,  1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        shape_x = x.shape
+        shape_y = y.shape
+        x = x.reshape(-1, x.shape[-1])
+        y = y.flatten()
+        x = x + self.pe[y]
+        x = x.reshape(shape_x)
+        y = y.reshape(shape_y)
+        return self.dropout(x)
+
+class FewShotTransformer(nn.Module):
+    def __init__(self, backbone, backbone_output_dim, max_classes=100, is_transductive=False, dropout=0.1):
+        super().__init__()
+        self.is_transductive = is_transductive
+        self.backbone = backbone
+        self.transformer = torch.nn.Transformer(batch_first=True)
+        d_model = self.transformer.d_model
+        self.class_encoding = ClassEncoding(d_model, dropout=dropout)
+        self.fc_transformer_in = nn.Linear(backbone_output_dim, d_model)
+        self.fc_transformer_out = nn.Linear(d_model, max_classes)
+    def forward(self, x):
+        return self.backbone(x)
+    def transform(self, support, support_classes, query=None):
+        src = self.fc_transformer_in(support)
+        tgt = self.fc_transformer_in(query) if query is not None else src
+        src = self.class_encoding(src, support_classes)
+        t = tgt.shape[1]
+        tgt_mask = None
+        if not self.is_transductive:
+            tgt_mask = -torch.inf*(torch.ones([t,t], device=support.device))
+            tgt_mask.fill_diagonal_(0)
+        return self.fc_transformer_out(self.transformer(src, tgt, tgt_mask=tgt_mask))
+
+        
+
+
+
+
