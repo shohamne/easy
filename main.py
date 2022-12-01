@@ -59,39 +59,58 @@ def crit(output, features, target):
     else:
         return criterion(output, target, num_classes)
  
-
-def train_transformer(model, optimizer, epoch, scheduler):
+gruns = {'runs': None}
+def train_transformer(model, optimizer, epoch, scheduler, features):
+    model.train()
     elems_train = [elements_per_class] * num_classes if elements_train is None else elements_train
     run_classes, run_indices = few_shot_eval.define_runs(args.n_ways + args.n_unknown, args.n_shots[0], args.n_queries, num_classes, elems_train)  
-    features = train_features
     targets = torch.arange(args.n_ways).unsqueeze(1).unsqueeze(0).to(args.device)
-    losses, total = 0., 0
+    losses, correct, total = 0., 0, 0
     for batch_idx in range(args.n_runs // args.batch_fs):
         optimizer.zero_grad()
         #print(f"{batch_idx+1} / {(args.n_runs // args.batch_fs)}")
         flat_features = features.reshape([features.shape[0], features.shape[1], -1])
+        # if gruns['runs'] is None:
+        #      gruns['runs'] = few_shot_eval.generate_runs(flat_features, run_classes, run_indices, batch_idx)
+        # runs = gruns['runs']
         runs = few_shot_eval.generate_runs(flat_features, run_classes, run_indices, batch_idx)
         runs = runs.to(args.device)
         supports = runs[:,:,:n_shots]
         queries = runs[:,:,n_shots:]
-        _, n_ways, n_class_samples, _ = runs.shape
+        batch_fs, n_ways, n_class_samples, dim = runs.shape
         labels = torch.repeat_interleave(targets, n_class_samples).reshape(n_ways, n_class_samples).unsqueeze(0).repeat(args.batch_fs, 1, 1)
         support_labels = labels[:,:,:n_shots]
         query_labels = labels[:,:,n_shots:]
         support_labels = support_labels.reshape([support_labels.shape[0], -1])
         query_labels = query_labels.reshape([query_labels.shape[0], -1])
-        supports = supports.reshape([supports.shape[0], -1, supports.shape[-1]])
-        queries = queries.reshape([queries.shape[0], -1, queries.shape[-1]])
-        preds = model.transform(supports, support_labels, queries)
-        loss = criterion(preds.reshape(-1, preds.shape[-1]), query_labels.flatten())
+        supports_t = supports.reshape([supports.shape[0], -1, supports.shape[-1]])
+        queries_t = queries.reshape([queries.shape[0], -1, queries.shape[-1]])
+        memory_t, preds_t = model.transform(supports_t, support_labels, queries_t)
+        preds_flat = preds_t.reshape(-1, preds_t.shape[-1])
+        query_labels_flat = query_labels.flatten()
+        #loss = criterion(preds_flat, query_labels_flat)
+        #correct += (preds_flat.argmax(dim=1) == query_labels_flat).sum().item()
+
+        memory = memory_t.reshape(supports.shape)
+        preds = preds_t.reshape(queries.shape)
+        means = torch.mean(memory, dim = 2)
+        dists = torch.norm(preds.reshape(batch_fs, n_ways, 1, -1, dim) - means.reshape(args.batch_fs, 1, n_ways, 1, dim), dim = 4, p = 2)
+        dists_flat = dists.transpose(3,2)
+        dists_flat = dists_flat.reshape(-1, n_ways)
+        loss = criterion(-dists_flat, query_labels_flat)
+        correct += (dists_flat.argmin(dim=1) == query_labels_flat).sum().item()
+
         loss.backward()
-        losses += loss.item() * preds.shape[0] * preds.shape[1]
-        total += preds.shape[0] * preds.shape[1]
+        losses += loss.item() * len(query_labels_flat)
+        total += len(query_labels_flat)
+
+
         # update parameters
         optimizer.step()
         scheduler.step()
         length = args.n_runs//args.batch_fs
-        print_train(epoch, scheduler, losses, np.nan, np.nan, total, batch_idx, length)
+        print(loss.item(), (preds_flat.argmax(dim=1) == query_labels_flat).sum().item())
+        print_train(epoch, scheduler, losses, correct, np.nan, total, batch_idx, length)
 
 
     return {
@@ -269,6 +288,10 @@ def train_complete(model, loaders, mixup = False):
     else:
         train_loader, val_loader, test_loader = loaders
 
+    if args.transformer and args.test_features != '':
+        features_for_transformer = few_shot_eval.preprocess(train_features,train_features)
+
+
     lr = args.lr
     F_ = None
     m = None
@@ -293,7 +316,7 @@ def train_complete(model, loaders, mixup = False):
                 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones = list(np.array(args.milestones) * length), gamma = args.gamma)
 
         if args.transformer and args.test_features != '':
-            train_stats = train_transformer(model, optimizer, (epoch + 1), scheduler) 
+            train_stats = train_transformer(model, optimizer, (epoch + 1), scheduler, features_for_transformer) 
         else:           
             train_stats = train(model, train_loader, optimizer, (epoch + 1), scheduler, F_, m, mixup = mixup, mm = epoch >= args.epochs)        
         
@@ -309,7 +332,7 @@ def train_complete(model, loaders, mixup = False):
                     ema.store()
                     ema.copy_to()
                 with torch.no_grad():
-                    res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, test_features, transform=model.transform)
+                    res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, test_features, transformer=model)
                     if args.preprocessing[0] == 'P':
                         features = features ** 0.5
                     m = features.mean(dim=0, keepdim=True)
@@ -356,7 +379,7 @@ def train_complete(model, loaders, mixup = False):
             if args.ema > 0:
                 ema.store()
                 ema.copy_to()
-            res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, test_features, transform=model.transform)
+            res, features = few_shot_eval.update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, test_features, transformer=model)
             if args.ema > 0:
                 ema.restore()
         else:
@@ -555,7 +578,7 @@ for i in range(args.runs):
             model.backbone.requires_grad_(False)
             model.to(args.device)
     else:
-        model = FewShotTransformer(None, backbone_output_dim)
+        model = FewShotTransformer(None, backbone_output_dim, max_classes=640, dropout=args.dropout, is_transductive=False)
         model.to(args.device)
 
 

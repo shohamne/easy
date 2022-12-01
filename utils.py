@@ -6,6 +6,7 @@ import scipy.stats as st
 import numpy as np
 import random
 from loss import NCEandRCE, StarLoss
+from my_transformer import Transformer
 
 
 ### generate random seeds
@@ -182,31 +183,36 @@ class ClassEncoding(nn.Module):
         y = y.flatten()
         x = x + self.pe[y]
         x = x.reshape(shape_x)
-        y = y.reshape(shape_y)
         return self.dropout(x)
 
 class FewShotTransformer(nn.Module):
-    def __init__(self, backbone, backbone_output_dim, max_classes=100, is_transductive=False, dropout=0.1):
+    def __init__(self, backbone, backbone_output_dim, n_layers=6, max_classes=100, is_transductive=False, dropout=0.1):
         super().__init__()
         self.is_transductive = is_transductive
         self.backbone = backbone
-        self.transformer = torch.nn.Transformer(batch_first=True)
+        self.transformer = Transformer(batch_first=True, dropout=dropout,  num_encoder_layers = n_layers, num_decoder_layers = n_layers)
         d_model = self.transformer.d_model
-        self.class_encoding = ClassEncoding(d_model, dropout=dropout)
+        self.class_encoding = ClassEncoding(d_model, dropout=dropout, n_classes=max_classes)
         self.fc_transformer_in = nn.Linear(backbone_output_dim, d_model)
         self.fc_transformer_out = nn.Linear(d_model, max_classes)
+        self.fc_transformer_memory = nn.Linear(d_model, max_classes)
+        self.bn_src = nn.BatchNorm1d(d_model)
+        self.bn_tgt = nn.BatchNorm1d(d_model)
     def forward(self, x):
         return self.backbone(x)
-    def transform(self, support, support_classes, query=None):
+    def transform(self, support, support_classes, query):
         src = self.fc_transformer_in(support)
-        tgt = self.fc_transformer_in(query) if query is not None else src
-        src = self.class_encoding(src, support_classes)
+        tgt = self.fc_transformer_in(query)
+        src = self.bn_src(src.reshape(-1,src.shape[2])).reshape(src.shape)
+        tgt = self.bn_tgt(tgt.reshape(-1,tgt.shape[2])).reshape(tgt.shape)
+        #src = self.class_encoding(src, support_classes)
         t = tgt.shape[1]
         tgt_mask = None
         if not self.is_transductive:
             tgt_mask = -torch.inf*(torch.ones([t,t], device=support.device))
             tgt_mask.fill_diagonal_(0)
-        return self.fc_transformer_out(self.transformer(src, tgt, tgt_mask=tgt_mask))
+        memory, output = self.transformer(src, tgt, tgt_mask=tgt_mask)
+        return self.fc_transformer_memory(memory), self.fc_transformer_out(output)
 
         
 

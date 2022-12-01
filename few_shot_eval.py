@@ -9,7 +9,6 @@ batch_few_shot_runs = args.batch_fs
 assert(n_runs % batch_few_shot_runs == 0)
 
 def define_runs(n_ways, n_shots, n_queries, num_classes, elements_per_class):
-    shuffle_classes = torch.LongTensor(np.arange(num_classes))
     run_classes = torch.LongTensor(n_runs, n_ways).to(args.dataset_device)
     run_indices = torch.LongTensor(n_runs, n_ways, n_shots + n_queries).to(args.dataset_device)
     for i in range(n_runs):
@@ -50,7 +49,7 @@ def generate_runs(data, run_classes, run_indices, batch_idx):
 
     return res
 
-def ncm(train_features, features, run_classes, run_indices, n_shots, elements_train=None, transform=None):
+def ncm(train_features, features, run_classes, run_indices, n_shots, elements_train=None, transformer=None):
     with torch.no_grad():
         dim = features.shape[-1]
         aug = features.shape[2] if len(features.shape) == 4 else 1
@@ -85,16 +84,24 @@ def ncm(train_features, features, run_classes, run_indices, n_shots, elements_tr
             queries = runs[:,:,n_shots:]
             batch_size, n_ways, n_class_samples, _ = runs.shape
             if args.transformer:
+                transformer.eval()
                 labels = torch.repeat_interleave(targets, n_class_samples).reshape(n_ways, n_class_samples).unsqueeze(0).repeat(batch_size,1,1)
                 support_labels = labels[:,:,:n_shots]
                 query_labels = labels[:,:,n_shots:]
                 support_labels = support_labels.reshape([support_labels.shape[0], -1])
                 query_labels = query_labels.reshape([query_labels.shape[0], -1])
-                supports = supports.reshape([supports.shape[0], -1, supports.shape[-1]])
-                queries = queries.reshape([queries.shape[0], -1, queries.shape[-1]])
-                preds = transform(supports, support_labels, queries)[:,:,:args.n_ways]
-                winners = torch.argmax(preds, dim=2)
-                scores += list((winners == query_labels).float().mean(dim=1).to("cpu").numpy())
+                supports_t = supports.reshape([supports.shape[0], -1, supports.shape[-1]])
+                queries_t = queries.reshape([queries.shape[0], -1, queries.shape[-1]])
+                memory_t, preds_t = transformer.transform(supports_t, support_labels, queries_t)
+                #preds_t = preds_t[:,:,:args.n_ways]
+                memory = memory_t.reshape(supports.shape)
+                preds = preds_t.reshape(queries.shape)
+                means = torch.mean(memory, dim = 2)
+                distances = torch.norm(preds.reshape(batch_few_shot_runs, args.n_ways, 1, -1, dim) - means.reshape(batch_few_shot_runs, 1, args.n_ways, 1, dim), dim = 4, p = 2)
+                winners = torch.min(distances, dim = 2)[1]
+                scores += list((winners == targets).float().mean(dim = 1).mean(dim = 1).to("cpu").numpy())
+                #winners = torch.argmax(preds_t, dim=2)
+                #scores += list((winners == query_labels).float().mean(dim=1).to("cpu").numpy())
                 scores_maj.append(np.nan)
                 scores_lin.append(np.nan)
                 scores_med.append(np.nan)
@@ -347,16 +354,16 @@ def get_features(model, loader, n_aug = args.sample_aug):
     features_total = features_total / n_aug if args.average\
          else torch.cat(features_total, dim=2)
     return features_total
-def eval_few_shot(train_features, val_features, novel_features, val_run_classes, val_run_indices, novel_run_classes, novel_run_indices, n_shots, transductive = False,elements_train=None, transform=None):
+def eval_few_shot(train_features, val_features, novel_features, val_run_classes, val_run_indices, novel_run_classes, novel_run_indices, n_shots, transductive = False,elements_train=None, transformer=None):
     if transductive:
         if args.transductive_softkmeans:
             return softkmeans(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train), softkmeans(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train)
         else:
             return kmeans(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train), kmeans(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train)
     else:
-        return ncm(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train, transform=transform), ncm(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train, transform=transform)
+        return ncm(train_features, val_features, val_run_classes, val_run_indices, n_shots, elements_train=elements_train, transformer=transformer), ncm(train_features, novel_features, novel_run_classes, novel_run_indices, n_shots, elements_train=elements_train, transformer=transformer)
 
-def update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, novel_features, transform=None):
+def update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_shot_meta_data, train_features, val_features, novel_features, transformer=None):
 
     if "M" in args.preprocessing or args.save_features != '':
         train_features = get_features(model, train_clean) if train_features is None else train_features
@@ -367,11 +374,11 @@ def update_few_shot_meta_data(model, train_clean, novel_loader, val_loader, few_
 
     res = []
     for i in range(len(args.n_shots)):
-        res.append(evaluate_shot(i, train_features, val_features, novel_features, few_shot_meta_data, model = model, transform=transform))
+        res.append(evaluate_shot(i, train_features, val_features, novel_features, few_shot_meta_data, model = model, transformer=transformer))
 
     return res, train_features.reshape(-1, train_features.shape[2])
 
-def evaluate_shot(index, train_features, val_features, novel_features, few_shot_meta_data, model = None, transductive = False, transform=None):
+def evaluate_shot(index, train_features, val_features, novel_features, few_shot_meta_data, model = None, transductive = False, transformer=None):
     (
     ((val_acc, val_conf), (val_acc_med, val_conf_med),
     (val_acc_me1, val_conf_me1), (val_acc_me2, val_conf_me2), (val_acc_me3, val_conf_me3), (val_acc_me4, val_conf_me4), 
@@ -383,7 +390,7 @@ def evaluate_shot(index, train_features, val_features, novel_features, few_shot_
     (novel_acc_me5, novel_conf_me5), (novel_acc_me6, novel_conf_me6), (novel_acc_me7, novel_conf_me7), (novel_acc_me8, novel_conf_me8), (novel_acc_me9, novel_conf_me9), 
     (novel_acc_maj, novel_conf_maj),
     (novel_acc_lin, novel_conf_lin), (novel_nld, novel_conf_nld), (novel_mse, novel_conf_mse), (novel_svm, novel_conf_svm), (novel_mvm, novel_conf_mvm)) 
-    )= eval_few_shot(train_features, val_features, novel_features, few_shot_meta_data["val_run_classes"][index], few_shot_meta_data["val_run_indices"][index], few_shot_meta_data["novel_run_classes"][index], few_shot_meta_data["novel_run_indices"][index], args.n_shots[index], transductive = transductive, elements_train=few_shot_meta_data["elements_train"], transform=transform)
+    )= eval_few_shot(train_features, val_features, novel_features, few_shot_meta_data["val_run_classes"][index], few_shot_meta_data["val_run_indices"][index], few_shot_meta_data["novel_run_classes"][index], few_shot_meta_data["novel_run_indices"][index], args.n_shots[index], transductive = transductive, elements_train=few_shot_meta_data["elements_train"], transformer=transformer)
     if val_acc > few_shot_meta_data["best_val_acc"][index]:
         if val_acc > few_shot_meta_data["best_val_acc_ever"][index]:
             few_shot_meta_data["best_val_acc_ever"][index] = val_acc

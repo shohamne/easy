@@ -80,7 +80,7 @@ parser.add_argument("--apl-beta", type=float, default=0.0, help="active passive 
 parser.add_argument("--star-loss-gamma", type=float, default=0.0, help="star loss alpha param")
 parser.add_argument("--no-mix-special-loss", action="store_true", help="mix special loss, if used, with standard cross entropy")
 parser.add_argument("--protonet-no-square", action="store_true", help="protonet based on norm dist instead of square norm")
-parser.add_argument("--transformer", action="store_true", help="use transformer")
+parser.add_argument("--transformer-layers", type=int, default=0, help="number of transformer layers")
 
 
 
